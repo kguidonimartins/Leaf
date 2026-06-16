@@ -22,6 +22,21 @@ You can grab the latest compiled release directly from [satwiktungala.com/apps/l
 - **Optimized for Apple Silicon** – Lightweight background footprint designed specifically for modern Mac architectures.
 - **Custom Inactivity Timer** – Configure how long apps can stay idle before being flagged to quit.  
 
+## 🧱 Building from source
+
+With Xcode installed, the included `Makefile` wraps the common commands:
+
+```bash
+make build     # compile a Debug build
+make run       # build and launch the app (does not install)
+make install   # build Release and copy to /Applications
+make test      # run the unit test suite
+make release   # compile a Release build
+make clean     # clean build artifacts
+```
+
+You can also open `Leaf.xcodeproj` in Xcode and build/run with ⌘R.
+
 ## 🛠️ Tech Stack
 
 - **Language:** Swift  
