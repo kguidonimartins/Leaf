@@ -11,6 +11,10 @@ struct SettingsView: View {
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("quitWithoutNotify") private var quitWithoutNotify: Bool = false
     @AppStorage("smartAlerts") private var smartAlerts: Bool = true
+    @AppStorage("detectBackgroundActivity") private var detectBackgroundActivity: Bool = true
+
+    /// Shared width for the controls column so every switch and caption lines up.
+    private let contentWidth: CGFloat = 360
 
     var body: some View {
         VStack(alignment: .center, spacing: 12.5) {
@@ -32,7 +36,7 @@ struct SettingsView: View {
             }
             .padding(1)
             
-            Group {
+            VStack(alignment: .leading, spacing: 14) {
                 
                 Toggle(isOn: $launchAtLogin) {
                     Text("Launch at login")
@@ -43,33 +47,28 @@ struct SettingsView: View {
                     addLoginItem(launchAtLogin: launchAtLogin)
                 }
                 
-                Toggle(isOn: $quitWithoutNotify) {
-                    Text("Quit without notifying")
-                        .padding(2)
-                }
-                .toggleStyle(.switch)
-            }
-            .font(.system(size: 13))
-            .shadow(radius: 0.2)
-            .fontDesign(.monospaced)
-            .foregroundStyle(colorScheme == .dark ? Color.primary : Color.black.opacity(0.75))
-            .tint(Color.green)
-            
-            StepperView()
-            
-            Spacer()
-            
-            VStack {
-                Toggle(isOn: $smartAlerts) {
-                    Text("Smart Alerts")
-                        .padding(2)
-                }
-                .toggleStyle(.switch)
+                toggleSetting(
+                    "Quit without notifying",
+                    caption: "Default for newly detected apps. Per-app settings always take precedence.",
+                    isOn: $quitWithoutNotify
+                )
                 
-                Text("Only warns you about inactive apps with high memory usage")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                StepperView()
+                    .frame(maxWidth: .infinity, alignment: .center)
+                
+                toggleSetting(
+                    "Smart Alerts",
+                    caption: "Only warns you about inactive apps with high memory usage",
+                    isOn: $smartAlerts
+                )
+                
+                toggleSetting(
+                    "Keep active apps alive",
+                    caption: "Won't close apps using audio or CPU in the background, like calls or video",
+                    isOn: $detectBackgroundActivity
+                )
             }
+            .frame(width: contentWidth)
             .font(.system(size: 13))
             .shadow(radius: 0.2)
             .fontDesign(.monospaced)
@@ -101,11 +100,30 @@ struct SettingsView: View {
             
         }
         .padding()
-        .frame(width: 460, height: 370)
+        .frame(width: 460, height: 500)
         .onDisappear {
             NSApp.setActivationPolicy(.accessory)
         }
         .presentedWindowStyle(.titleBar)
+    }
+    
+    /// A switch with a wrapping caption underneath, left-aligned within the
+    /// shared controls column so switches and captions line up across rows.
+    @ViewBuilder
+    private func toggleSetting(_ title: String, caption: String, isOn: Binding<Bool>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Toggle(isOn: isOn) {
+                Text(title)
+                    .padding(2)
+            }
+            .toggleStyle(.switch)
+            
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
     
     private func addLoginItem(launchAtLogin: Bool) {
