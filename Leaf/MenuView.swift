@@ -10,7 +10,7 @@ struct MenuView: View {
             VStack(alignment: .leading) {
                 if tracker.runningApps.count > 0 {
                     ForEach(Array(tracker.runningApps), id: \.key) { app in
-                        AppView(app: app, tracker: tracker, notifyOrNot: tracker.nonNotifyApps[app.key.bundleIdentifier ?? ""] ?? true)
+                        AppView(app: app, tracker: tracker, mode: tracker.appModes[app.key.bundleIdentifier ?? ""] ?? .notify)
                     }
                 } else {
                     HStack {
@@ -43,11 +43,14 @@ struct AppView: View {
     
     var app: (key: NSRunningApplication, value: TimeInterval)
     var tracker: Tracker
-    var notifyOrNot: Bool
+    var mode: AppMode
     
     @Environment(\.colorScheme) var colorScheme
 
     @State private var hoveringApp: String? = nil
+    
+    private var bundleID: String { app.key.bundleIdentifier ?? "" }
+    private var isHovering: Bool { hoveringApp == app.key.bundleIdentifier }
     
     var body: some View {
         HStack(alignment: .center) {
@@ -56,23 +59,38 @@ struct AppView: View {
                 Image(nsImage: icon)
                     .resizable()
                     .frame(width: 26, height: 26)
-                    .opacity(notifyOrNot ? 0.6 : 1.0)
+                    .opacity(mode == .protect ? 0.6 : 1.0)
             }
             
             Text(app.key.localizedName ?? "Unknown")
-                .foregroundStyle(notifyOrNot ? Color.primary.opacity(0.5) : .primary)
+                .foregroundStyle(mode == .protect ? Color.primary.opacity(0.5) : .primary)
                 
             Spacer()
             
-            if app.key.bundleIdentifier == hoveringApp || notifyOrNot {
+            // Column 1 - Protect ("never close")
+            if isHovering || mode == .protect {
                 Button {
-                    tracker.toggleNotifications(app: app.key.bundleIdentifier ?? "")
+                    tracker.toggleProtect(app: bundleID)
                 } label: {
-                    Image(systemName: notifyOrNot ? "bell.slash.fill" : "bell")
+                    Image(systemName: mode == .protect ? "shield.fill" : "shield")
                         .frame(height: 15)
-                        .foregroundStyle(Color.primary.opacity(0.75))
+                        .foregroundStyle(mode == .protect ? Color.green : Color.primary.opacity(0.75))
                 }
                 .buttonStyle(.plain)
+                .help("Never close this app")
+            }
+            
+            // Column 2 - Silent quit ("close without notifying")
+            if isHovering || mode == .silentQuit {
+                Button {
+                    tracker.toggleSilentQuit(app: bundleID)
+                } label: {
+                    Image(systemName: mode == .silentQuit ? "bolt.fill" : "bolt")
+                        .frame(height: 15)
+                        .foregroundStyle(mode == .silentQuit ? Color.orange : Color.primary.opacity(0.75))
+                }
+                .buttonStyle(.plain)
+                .help("Quit this app without notifying")
             }
         }
         .onHover { hovering in
