@@ -80,7 +80,20 @@ struct AppView: View {
                 .help("Never close this app")
             }
             
-            // Column 2 - Silent quit ("close without notifying")
+            // Column 2 - Hide
+            if isHovering || mode == .hide {
+                Button {
+                    tracker.toggleHide(app: bundleID)
+                } label: {
+                    Image(systemName: mode == .hide ? "eye.fill" : "eye")
+                        .frame(height: 15)
+                        .foregroundStyle(mode == .hide ? Color.blue : Color.primary.opacity(0.75))
+                }
+                .buttonStyle(.plain)
+                .help("Hide this app")
+            }
+
+            // Column 3 - Silent quit ("close without notifying")
             if isHovering || mode == .silentQuit {
                 Button {
                     tracker.toggleSilentQuit(app: bundleID)

@@ -14,6 +14,19 @@ unit-test suite plus build tooling.
 
 ### Added
 
+#### Hide mode
+- **New per-app mode: `hide`.** When inactive, the app is hidden (Cmd-H) instead
+  of quit or notified about. This is useful for apps you want off your screen but
+  still running (e.g. chat apps, background tools). The mode is mutually exclusive
+  with `protect`, `silentQuit`, and `notify`, and is toggled via a new 👁 eye icon
+  (`eye` / `eye.fill`, blue when active) in the menu bar list.
+- **`hideApp(appID:)`** instance method on `Tracker` that calls
+  `NSRunningApplication.hide()`. After hiding, the app's idle timer is reset so
+  it isn't re-hidden immediately.
+- **3 new unit tests** covering the hide decision: action when idle exceeded and
+  memory consuming, ignored when not memory consuming, and ignored below the idle
+  threshold.
+
 #### Background activity detection
 - **Keep active apps alive.** Apps that are doing real work in the background are
   no longer treated as idle. An app is considered active when any of the
@@ -50,11 +63,12 @@ unit-test suite plus build tooling.
   active, and the extra audio query / path resolution work is skipped.
 
 #### Per-app modes
-- **Three explicit, mutually-exclusive per-app modes** replacing the old binary
+- **Four explicit, mutually-exclusive per-app modes** replacing the old binary
   "notify / don't notify" flag:
   - `notify` (default): an idle app triggers a notification with a Quit action.
   - `protect`: the app is never touched.
   - `silentQuit`: the app is terminated when idle, with no notification.
+  - `hide`: the app is hidden when idle.
 - **Menu bar controls** for the new modes in `MenuView`:
   - a shield icon (`shield` / `shield.fill`, green when on) to protect an app,
   - a bolt icon (`bolt` / `bolt.fill`, orange when on) to silently quit an app,

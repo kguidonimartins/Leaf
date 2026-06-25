@@ -99,6 +99,39 @@ struct TrackerLogicTests {
         #expect(silent == .ignore)
     }
 
+    @Test func hideTriggersWhenIdleExceededAndMemoryConsuming() {
+        let action = Tracker.decideAction(
+            mode: .hide,
+            idleTime: TimeInterval(16 * 60),
+            closingTimeMinutes: 15,
+            isMemoryConsuming: true,
+            alreadyNotified: false
+        )
+        #expect(action == .hide)
+    }
+
+    @Test func hideIgnoresWhenNotMemoryConsuming() {
+        let action = Tracker.decideAction(
+            mode: .hide,
+            idleTime: TimeInterval(16 * 60),
+            closingTimeMinutes: 15,
+            isMemoryConsuming: false,
+            alreadyNotified: false
+        )
+        #expect(action == .ignore)
+    }
+
+    @Test func hideIgnoresBelowIdleThreshold() {
+        let action = Tracker.decideAction(
+            mode: .hide,
+            idleTime: TimeInterval(5 * 60),
+            closingTimeMinutes: 15,
+            isMemoryConsuming: true,
+            alreadyNotified: false
+        )
+        #expect(action == .ignore)
+    }
+
     // MARK: - Activity detection
 
     @Test func foregroundAppIsActive() {
@@ -279,13 +312,17 @@ struct TrackerLogicTests {
     @Test func togglingActiveModeFallsBackToNotify() {
         #expect(Tracker.toggledMode(current: .protect, toggling: .protect) == .notify)
         #expect(Tracker.toggledMode(current: .silentQuit, toggling: .silentQuit) == .notify)
+        #expect(Tracker.toggledMode(current: .hide, toggling: .hide) == .notify)
     }
 
     @Test func togglingSwitchesBetweenModesExclusively() {
         #expect(Tracker.toggledMode(current: .notify, toggling: .protect) == .protect)
         #expect(Tracker.toggledMode(current: .notify, toggling: .silentQuit) == .silentQuit)
+        #expect(Tracker.toggledMode(current: .notify, toggling: .hide) == .hide)
         // Switching directly from one active mode to the other never leaves both on.
         #expect(Tracker.toggledMode(current: .silentQuit, toggling: .protect) == .protect)
         #expect(Tracker.toggledMode(current: .protect, toggling: .silentQuit) == .silentQuit)
+        #expect(Tracker.toggledMode(current: .hide, toggling: .protect) == .protect)
+        #expect(Tracker.toggledMode(current: .protect, toggling: .hide) == .hide)
     }
 }

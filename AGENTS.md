@@ -34,7 +34,7 @@ Always run `make test` after changing tracking logic.
   intentional exception is attributing system `WebKit.framework` processes to
   Safari (`systemWebKitOwnerBundleID`); document any new exception.
 - **Per-app modes** are the mutually-exclusive `AppMode` enum
-  (`notify` / `protect` / `silentQuit`), persisted under `appModes`. Preserve the
+  (`notify` / `protect` / `silentQuit` / `hide`), persisted under `appModes`. Preserve the
   legacy `nonNotifyApps` migration path.
 - **Activity = foreground OR audio output OR CPU over threshold**, aggregated
   across an app's helper processes (mapped by bundle-path containment). Prefer

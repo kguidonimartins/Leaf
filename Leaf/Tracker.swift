@@ -4,7 +4,7 @@ import UserNotifications
 import SwiftUI
 
 /// Per-app behavior when an app stays inactive long enough.
-/// The three modes are mutually exclusive.
+/// The four modes are mutually exclusive.
 enum AppMode: String, Codable {
     /// Inactive app triggers a notification with a quit action (default).
     case notify
@@ -12,6 +12,8 @@ enum AppMode: String, Codable {
     case `protect`
     /// Inactive app is terminated without any notification.
     case silentQuit
+    /// Inactive app is hidden.
+    case hide
 }
 
 @Observable class Tracker: NSObject, UNUserNotificationCenterDelegate {
@@ -84,7 +86,7 @@ enum AppMode: String, Codable {
     
     /// Resolves the next mode when toggling a given mode on/off.
     /// Toggling the active mode off returns `.notify`; otherwise switches to the
-    /// target mode, keeping the three modes mutually exclusive.
+    /// target mode, keeping the four modes mutually exclusive.
     static func toggledMode(current: AppMode, toggling target: AppMode) -> AppMode {
         current == target ? .notify : target
     }
@@ -93,6 +95,7 @@ enum AppMode: String, Codable {
         case ignore
         case notify
         case quit
+        case hide
     }
     
     /// Decides what to do with a single inactive app given its mode and state.
@@ -111,6 +114,8 @@ enum AppMode: String, Codable {
             return .ignore
         case .silentQuit:
             return .quit
+        case .hide:
+            return .hide
         case .notify:
             return alreadyNotified ? .ignore : .notify
         }
@@ -232,6 +237,14 @@ enum AppMode: String, Codable {
             }
         }
     }
+
+    func hideApp(appID: Int32) {
+        if let app = NSRunningApplication(processIdentifier: appID) {
+            DispatchQueue.main.async {
+                app.hide()
+            }
+        }
+    }
     
     func requestNotificationPermission(completion: @escaping (Bool) -> Void) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
@@ -344,6 +357,12 @@ enum AppMode: String, Codable {
     internal func toggleSilentQuit(app: String) {
         let current = appModes[app] ?? .notify
         setMode(app: app, mode: Tracker.toggledMode(current: current, toggling: .silentQuit))
+    }
+
+    /// Toggles "hide" on/off; turning it off falls back to `.notify`.
+    internal func toggleHide(app: String) {
+        let current = appModes[app] ?? .notify
+        setMode(app: app, mode: Tracker.toggledMode(current: current, toggling: .hide))
     }
     
     /// Samples every process' memory and recent CPU via `ps`, resolves each
@@ -475,6 +494,9 @@ enum AppMode: String, Codable {
                     break
                 case .quit:
                     quitApp(appID: app.processIdentifier)
+                case .hide:
+                    hideApp(appID: app.processIdentifier)
+                    self.runningApps[app] = now
                 case .notify:
                     notificationGuys.append((app, idleTime, appMemoryUsage))
                 }
