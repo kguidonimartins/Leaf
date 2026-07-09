@@ -5,7 +5,31 @@ All notable changes to Leaf are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3] - Unreleased
+## [1.4] - Unreleased
+
+This release adds a TOML configuration file for persistent settings, with
+live-reload so hand-edited config is picked up automatically.
+
+### Added
+
+#### TOML configuration file
+- **`~/.config/leaf/config.toml`** persists all GUI settings (launch at login,
+  quit without notify, idle timeout, smart alerts, background activity detection,
+  and per-app modes) in an editable TOML file.
+- **Bidirectional sync with live-reload.** Changes made in the GUI are written
+  back to the file; edits made by hand to `config.toml` are detected and applied
+  to the running app within seconds.
+- **Custom TOML parser/serializer** with no external dependencies. Pure functions
+  for parse/serialize are unit-tested with round-trip, malformed-input, and
+  migration coverage.
+- **Migration from existing UserDefaults.** On first launch after the update, an
+  existing user's settings are preserved by generating the TOML file from their
+  current UserDefaults values.
+
+### Changed
+- **Version** bumped from 1.3 (build 5) to **1.4 (build 6)**.
+
+## [1.3]
 
 This release teaches Leaf to recognize when an app is genuinely busy in the
 background (a call, a video, a build) and leave it alone, replaces the old

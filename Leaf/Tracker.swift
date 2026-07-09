@@ -37,6 +37,7 @@ enum AppMode: String, Codable {
             if let encoded = try? JSONEncoder().encode(appModes) {
                 appModesData = encoded
             }
+            ConfigManager.shared.notifyAppModesChanged()
         }
     }
     
