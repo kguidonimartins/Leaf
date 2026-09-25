@@ -19,10 +19,17 @@ Always run `make test` after changing tracking logic.
 
 - `Leaf/Tracker.swift` – core engine: tracks running apps, samples processes,
   decides notify/quit/keep-alive. Holds the testable pure logic.
+- `Leaf/ConfigManager.swift` – TOML parse/serialize/validate (pure) plus the
+  `ConfigManagerImpl` that persists settings to `~/.config/leaf/config.toml`
+  (symlink-aware) and mirrors it with UserDefaults, live-reloaded.
 - `Leaf/AudioActivityMonitor.swift` – Core Audio HAL wrapper; PIDs playing audio.
 - `Leaf/MenuView.swift` – menu bar UI and per-app mode controls.
 - `Leaf/SettingsView.swift` – settings window.
-- `LeafTests/TrackerLogicTests.swift` – Swift Testing suite.
+- `LeafTests/TrackerLogicTests.swift` – Swift Testing suite for `Tracker`'s
+  pure logic.
+- `LeafTests/ConfigTOMLTests.swift` – parse/serialize/validate unit tests.
+- `LeafTests/ConfigManagerIOTests.swift` – real file I/O against a scratch
+  directory (symlink handling, load/save round-trips).
 
 ## Conventions
 
@@ -30,9 +37,13 @@ Always run `make test` after changing tracking logic.
   functions on `Tracker` (e.g. `decideAction`, `isConsideredActive`,
   `resolveOwner`, `aggregateSignals`) and add tests in `TrackerLogicTests`.
   System access (NSWorkspace, Core Audio, `ps`) stays in instance methods.
-- **No hardcoded app allow/blocklists.** Behavior must be general. The only
-  intentional exception is attributing system `WebKit.framework` processes to
-  Safari (`systemWebKitOwnerBundleID`); document any new exception.
+- **No hardcoded app allow/blocklists.** Behavior must be general. The
+  intentional exceptions are: attributing system `WebKit.framework`
+  processes to Safari (`systemWebKitOwnerBundleID`), and the fixed list of
+  macOS system processes (Dock, Finder, Spotlight, etc.) `isExcludedApp`
+  never tracks, since they're OS chrome rather than user apps and mostly
+  don't run with `.regular` activation policy anyway. Document any new
+  exception.
 - **Per-app modes** are the mutually-exclusive `AppMode` enum
   (`notify` / `protect` / `silentQuit` / `hide`), persisted under `appModes`. Preserve the
   legacy `nonNotifyApps` migration path.
@@ -42,6 +53,12 @@ Always run `make test` after changing tracking logic.
 - The Xcode project uses synchronized file groups: new files under `Leaf/` are
   picked up automatically; no `project.pbxproj` editing needed to add sources.
 - Comments explain intent/trade-offs, not what the code obviously does.
+- **Tests run inside the real app (`TEST_HOST` = `Leaf.app`, same bundle ID
+  as an installed Leaf), so they must never touch the machine's real,
+  shared `UserDefaults`/config.toml.** Gate any new side effect behind
+  `ConfigManager.isRunningTests`, and inject `UserDefaults`/`configURL`
+  (see `ConfigManagerImpl`'s init) rather than reaching for `.standard` or
+  the real `~/.config/leaf` path in a test.
 
 ## Notes
 

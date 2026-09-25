@@ -32,7 +32,21 @@ live-reload so hand-edited config is picked up automatically.
   **1.4 (build 8)** for disabling Sparkle, then to **1.4 (build 9)** for the
   Smart Alerts scope fix below, then to **1.4 (build 10)** for the login
   item fix below, then to **1.4 (build 11)** for the quit-safety fix below,
-  then to **1.4 (build 12)** for the sleep/wake timer fix below.
+  then to **1.4 (build 12)** for the sleep/wake timer fix below, then to
+  **1.4 (build 13)** for the documentation/TOML-header pass below.
+- **README and AGENTS.md updated to match reality.** Requirements now say
+  macOS 14.6 / Xcode 26 (was 14.0 / Xcode 15+); "Memory Pressure Monitoring"
+  is now described accurately as a fixed 200 MB per-app RSS threshold, not
+  a read of system memory pressure; added a Configuration section
+  documenting `config.toml`'s keys and validation; download/contact
+  sections now describe this repo as a fork with auto-update disabled
+  instead of pointing at upstream's releases as if they were this fork's
+  own. AGENTS.md now documents `isExcludedApp`'s system-process list as a
+  second intentional exception to the no-hardcoded-lists rule (alongside
+  WebKit→Safari), and notes the test-isolation convention
+  (`ConfigManager.isRunningTests`, injectable `UserDefaults`/`configURL`).
+- **`config.toml`'s header comment is now English**, matching the rest of
+  the UI and docs (was partly Portuguese).
 - **Tracking behaved differently after the screen slept once.** Waking from
   sleep rebuilt the 30s timer to call `trackAndTerminate()` directly instead
   of reusing the normal `refreshApps()` (which calls `removeTerminatedApps()`

@@ -6,21 +6,33 @@ Built with **Swift**, **SwiftUI**, and **Xcode**, Leaf App improves focus and sy
 
 ## 📌 Requirements
 
-- macOS 14.0 or later  
-- Xcode 15+ (for building from source)
+- macOS 14.6 or later (per-process audio APIs need 14.2+)
+- Xcode 26+ (for building from source — required by the SwiftUI Liquid
+  Glass APIs, e.g. `.glass`, used in onboarding)
 
 ## ↓ Download & Installation
 
-You can grab the latest compiled release directly from [satwiktungala.com/apps/leaf](https://satwiktungala.com/apps) or download the `.dmg` from the **[Releases](https://github.com/Atswik/Leaf/releases)** tab.
+This is a fork of [Satwik](https://satwiktungala.com)'s original [Leaf](https://github.com/Atswik/Leaf). It has no
+compiled releases of its own yet and auto-update is disabled (see below), so
+for now, build it from source — see "Building from source" below.
 
 ## ⚡️ Features
 
-- **Memory Pressure Monitoring** – Actively watches your system's memory state and identifies hidden background apps hoarding RAM.
+- **Per-app memory threshold** – Flags an inactive app as eligible for
+  notify/quit/hide once it (and its helper processes) crosses a fixed
+  200 MB RSS threshold, via the "Smart Alerts" toggle. This is a fixed
+  per-app limit, not a read of the system's overall memory pressure.
 - **Safe Quit** – Sends standard native termination requests (`Cmd + Q`) rather than force-killing processes, ensuring target apps still prompt you to save unsaved work.
 - **Zero Data Collection** – 100% local processing with absolutely no telemetry or tracking.
 - **Optimized Performance** – Background service designed to use minimal memory and CPU.
 - **Optimized for Apple Silicon** – Lightweight background footprint designed specifically for modern Mac architectures.
-- **Custom Inactivity Timer** – Configure how long apps can stay idle before being flagged to quit.  
+- **Custom Inactivity Timer** – Configure how long apps can stay idle before being flagged.
+- **Four per-app modes** – `notify` (ask before quitting), `protect` (never
+  touch), `silentQuit` (quit with no prompt), and `hide` (hide instead of
+  quitting) — set per app from the menu bar.
+- **Background activity detection** – An app playing audio or busy on the
+  CPU (including its helper processes, e.g. browser/Electron helpers) is
+  kept alive even while idle.
 
 ## 🧱 Building from source
 
@@ -37,20 +49,47 @@ make clean     # clean build artifacts
 
 You can also open `Leaf.xcodeproj` in Xcode and build/run with ⌘R.
 
+## ⚙️ Configuration
+
+Settings and per-app modes are persisted to `~/.config/leaf/config.toml`
+(hand-editable; changes are picked up live) and mirrored to `UserDefaults`.
+It's created on first launch from your existing UserDefaults values.
+
+```toml
+version = 1
+
+[general]
+launch_at_login = false
+quit_without_notify = false
+notify_after_minutes = 15       # one of 5, 10, 15, 30, 60, 120, 240
+smart_alerts = true             # memory filter, applies to notify only
+keep_active_apps_alive = true   # background activity detection
+
+# Per-app modes: notify | protect | silent_quit | hide
+[apps]
+"com.apple.Safari" = "protect"
+```
+
+An empty file or one missing `version = 1` is treated as invalid and
+ignored (current settings are kept, nothing is overwritten) rather than
+silently wiping every app mode.
+
 ## 🛠️ Tech Stack
 
 - **Language:** Swift  
 - **UI Framework:** SwiftUI  
 - **IDE:** Xcode  
 - **APIs:** NSWorkspace, NSRunningApplication  
-- **Storage:** AppStorage
-- **Updates:** Sparkle 2
-
-
+- **Storage:** `~/.config/leaf/config.toml` + `UserDefaults`
+- **Updates:** Sparkle 2, currently disabled in this fork (see below)
 
 ## 📬 Contact
 
-Built in public by [Satwik](https://satwiktungala.com). 
+Leaf was originally created by [Satwik](https://satwiktungala.com); this
+fork tracks their upstream at [Atswik/Leaf](https://github.com/Atswik/Leaf).
+Auto-update is disabled here since this fork has no signing key for
+upstream's feed and no feed of its own — see `CHANGELOG.md`.
 
-Have questions, feedback, or feature ideas? Reach out on X or open an issue right here on GitHub!
+For issues or feature ideas specific to this fork, open an issue on this
+repository.
 

@@ -503,8 +503,8 @@ final class ConfigManagerImpl: NSObject {
 
     static func serialize(_ config: LeafConfig) -> String {
         var lines: [String] = [
-            "# Managed by Leaf. Editável à mão: as mudanças são aplicadas ao vivo.",
-            "# Chaves desconhecidas e comentários são descartados quando o Leaf reescreve.",
+            "# Managed by Leaf. Hand-editable: changes are applied live.",
+            "# Unknown keys and comments are discarded whenever Leaf rewrites this file.",
             "version = 1",
             "",
             "[general]",
@@ -514,7 +514,7 @@ final class ConfigManagerImpl: NSObject {
             "smart_alerts = \(config.smartAlerts)",
             "keep_active_apps_alive = \(config.keepActiveAppsAlive)",
             "",
-            "# Modos por app: notify | protect | silent_quit | hide",
+            "# Per-app modes: notify | protect | silent_quit | hide",
             "[apps]",
         ]
 
