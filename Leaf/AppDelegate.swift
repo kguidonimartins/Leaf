@@ -10,12 +10,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     let sparkleDelegate = SparkleDelegate()
     var updateController: SPUStandardUpdaterController
-    
-    var updater: SPUUpdater { updateController.updater }
-    
+
     override init() {
+        // Sparkle is disabled for this fork: it has no key to sign updates
+        // for the upstream feed configured in Info.plist and no feed of its
+        // own, so starting the updater would only ever offer the original
+        // author's builds — silently overwriting this fork's binary,
+        // config, and settings. `startingUpdater: false` keeps the
+        // integration in place (for a future feed/key of this fork's own)
+        // without ever checking or downloading anything.
         self.updateController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: false,
             updaterDelegate: nil,
             userDriverDelegate: sparkleDelegate
         )

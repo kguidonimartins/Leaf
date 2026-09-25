@@ -1,13 +1,10 @@
 import SwiftUI
 import ServiceManagement
-import Sparkle
 
 struct SettingsView: View {
-    
+
     @Environment(\.colorScheme) private var colorScheme
-    
-    let updater: SPUUpdater
-    
+
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("quitWithoutNotify") private var quitWithoutNotify: Bool = false
     @AppStorage("smartAlerts") private var smartAlerts: Bool = true
@@ -74,14 +71,7 @@ struct SettingsView: View {
             .fontDesign(.monospaced)
             .foregroundStyle(colorScheme == .dark ? Color.primary : Color.black.opacity(0.75))
             .tint(Color.green)
-            
-            Button("Check for Updates") {
-                updater.checkForUpdates()
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .padding(.top, 10)
-            
+
             Spacer()
             
             VStack {
@@ -140,7 +130,7 @@ struct SettingsView: View {
 }
 
 #Preview {
-    SettingsView(updater: SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: nil).updater)
+    SettingsView()
 }
 
 struct StepperView: View {

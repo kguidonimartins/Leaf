@@ -28,7 +28,18 @@ live-reload so hand-edited config is picked up automatically.
 
 ### Changed
 - **Version** bumped from 1.3 (build 5) to **1.4 (build 6)**, then to
-  **1.4 (build 7)** for the config.toml symlink fix below.
+  **1.4 (build 7)** for the config.toml symlink fix below, then to
+  **1.4 (build 8)** for disabling Sparkle.
+- **Sparkle auto-update is disabled in this fork.** This repository still
+  ships with the upstream author's `SUFeedURL`/`SUPublicEDKey` and bundle ID
+  (`com.satwik.Leaf`); starting the updater against that feed would offer
+  the original author's builds as "updates" and could silently overwrite
+  this fork's binary, config, and per-app settings the moment upstream
+  cuts a release with a higher version. `SPUStandardUpdaterController` is
+  now started with `startingUpdater: false` (plus `SUEnableAutomaticChecks
+  = NO` in Info.plist as a second guard), and the "Check for Updates"
+  button is removed from Settings. The Sparkle integration itself is left
+  in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
 - **`config.toml` as a symlink (e.g. into a dotfiles repo) silently broke

@@ -1,5 +1,4 @@
 import SwiftUI
-import Sparkle
 
 @main
 struct LeafApp: App {
@@ -85,7 +84,7 @@ struct LeafApp: App {
         }
         
         Settings {
-            SettingsView(updater: appDelegate.updater)
+            SettingsView()
         }
     }
 }
