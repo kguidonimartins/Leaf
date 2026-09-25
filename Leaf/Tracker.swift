@@ -248,11 +248,26 @@ enum AppMode: String, Codable {
         })
     }
  
-    func quitApp(appID: Int32) {
-        if let app = NSRunningApplication(processIdentifier: appID) {
-            DispatchQueue.main.async {
-                app.terminate()
-            }
+    /// Whether it's safe to act on the process at a captured PID: its
+    /// current bundle ID must still match what we expected when the PID was
+    /// captured (e.g. into a notification's userInfo, which can sit around
+    /// long enough for the OS to reuse that PID for an unrelated process).
+    static func shouldQuit(pidBundleID: String?, expectedBundleID: String) -> Bool {
+        pidBundleID == expectedBundleID
+    }
+
+    /// Terminates the process at `appID`. When `expectedBundleID` is given
+    /// (e.g. from a notification captured earlier), the current process'
+    /// bundle ID must still match it — guards against the PID having been
+    /// reused by an unrelated process since it was captured.
+    func quitApp(appID: Int32, expectedBundleID: String? = nil) {
+        guard let app = NSRunningApplication(processIdentifier: appID) else { return }
+        if let expectedBundleID,
+           !Tracker.shouldQuit(pidBundleID: app.bundleIdentifier, expectedBundleID: expectedBundleID) {
+            return
+        }
+        DispatchQueue.main.async {
+            app.terminate()
         }
     }
 
@@ -340,17 +355,32 @@ enum AppMode: String, Codable {
         
     private func removeTerminatedApps() {
         let apps = NSWorkspace.shared.runningApplications
-        
+
         let currentApps = apps.compactMap { $0 }
         DispatchQueue.main.async {
             self.runningApps = self.runningApps.filter { currentApps.contains($0.key) }
         }
-        
+
         for app in runningApps.keys {
             if isExcludedApp(app: app) {
                 runningApps[app] = nil
             }
         }
+    }
+
+    /// Clears the delivered notification and `notifiedApps` entry for an
+    /// app the instant it terminates. Without this, a stale "already
+    /// notified" entry keeps a relaunched app from ever being notified
+    /// about again until it's foregrounded, and a delivered notification for
+    /// a dead app could still be actioned later — its captured PID may have
+    /// since been reused by an unrelated process (guarded separately by
+    /// `quitApp`'s bundle ID check, but there's no reason to leave the stale
+    /// notification sitting there either).
+    private func didTerminateApplication(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              let bundleID = app.bundleIdentifier else { return }
+        notifiedApps.remove(bundleID)
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [bundleID])
     }
     
     internal func setMode(app: String, mode: AppMode) {
@@ -511,7 +541,7 @@ enum AppMode: String, Codable {
                 case .ignore:
                     break
                 case .quit:
-                    quitApp(appID: app.processIdentifier)
+                    quitApp(appID: app.processIdentifier, expectedBundleID: bundleID)
                 case .hide:
                     hideApp(appID: app.processIdentifier)
                     self.runningApps[app] = now
@@ -566,7 +596,7 @@ enum AppMode: String, Codable {
         let content = UNMutableNotificationContent()
         content.title = "Want me to quit \(app.localizedName ?? "an unknown app")?"
         content.sound = .default
-        content.userInfo = ["persistent" : true, "appID" : app.processIdentifier]
+        content.userInfo = ["persistent" : true, "appID" : app.processIdentifier, "bundleID" : app.bundleIdentifier ?? ""]
         content.categoryIdentifier = "QUIT_ALERT"
         
         let quitAction = UNNotificationAction(identifier: "QUIT_APP", title: "Quit")
@@ -665,7 +695,8 @@ enum AppMode: String, Codable {
             self.addLaunchedApps()
         }
         
-        notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { _ in
+        notificationCenter.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main) { notification in
+            self.didTerminateApplication(notification)
             self.removeTerminatedApps()
         }
         
@@ -688,8 +719,10 @@ enum AppMode: String, Codable {
     internal func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         
         if response.actionIdentifier == "QUIT_APP" {
-            if let appID = response.notification.request.content.userInfo["appID"] as? Int32 {
-                quitApp(appID: appID)
+            let userInfo = response.notification.request.content.userInfo
+            if let appID = userInfo["appID"] as? Int32,
+               let bundleID = userInfo["bundleID"] as? String {
+                quitApp(appID: appID, expectedBundleID: bundleID)
             }
         }
         

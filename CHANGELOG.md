@@ -31,7 +31,18 @@ live-reload so hand-edited config is picked up automatically.
   **1.4 (build 7)** for the config.toml symlink fix below, then to
   **1.4 (build 8)** for disabling Sparkle, then to **1.4 (build 9)** for the
   Smart Alerts scope fix below, then to **1.4 (build 10)** for the login
-  item fix below.
+  item fix below, then to **1.4 (build 11)** for the quit-safety fix below.
+- **The "Quit" notification action could terminate the wrong process.** It
+  acted on a PID captured when the notification was created, with no check
+  that the process at that PID was still the app the notification named —
+  if the app had since exited and the OS reused its PID for something else,
+  clicking "Quit" would terminate that unrelated process. `quitApp` now
+  also carries the expected bundle ID and refuses to act unless the
+  process at that PID still matches it. Terminated apps also now have
+  their delivered notification and `notifiedApps` entry cleared
+  immediately (previously only on the next `.notify` cycle), so a
+  relaunched app isn't silently treated as "already notified" until it's
+  foregrounded.
 - **The login item was re-registered/unregistered on every config load**,
   not just when the setting actually changed — including on every TOML
   edit and every app launch — which could revert a login item the user

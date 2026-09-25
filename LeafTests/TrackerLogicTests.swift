@@ -4,6 +4,23 @@ import Testing
 
 struct TrackerLogicTests {
 
+    // MARK: - Quit safety (stale PID reuse guard)
+
+    @Test func shouldQuitWhenBundleIDMatches() {
+        #expect(Tracker.shouldQuit(pidBundleID: "com.example.App", expectedBundleID: "com.example.App"))
+    }
+
+    @Test func shouldNotQuitWhenPIDWasReusedByAnotherApp() {
+        // The PID captured in a notification's userInfo can outlive the app
+        // it named; by the time the user clicks "Quit", the OS may have
+        // reused that PID for something unrelated.
+        #expect(!Tracker.shouldQuit(pidBundleID: "com.other.App", expectedBundleID: "com.example.App"))
+    }
+
+    @Test func shouldNotQuitWhenProcessHasNoBundleID() {
+        #expect(!Tracker.shouldQuit(pidBundleID: nil, expectedBundleID: "com.example.App"))
+    }
+
     // MARK: - Legacy migration
 
     @Test func migrateLegacyMapsTrueToProtectAndFalseToNotify() {
