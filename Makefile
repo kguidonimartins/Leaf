@@ -21,8 +21,10 @@ run: build
 	open "$(APP)"
 
 install: release
+	-killall Leaf
 	cp -R "$(RELEASE_APP)" "$(INSTALL_DIR)/"
 	@echo "Installed Leaf to $(INSTALL_DIR)/Leaf.app"
+	open "$(INSTALL_DIR)/Leaf.app"
 
 test:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -destination 'platform=macOS' -derivedDataPath $(DERIVED) $(XCODEFLAGS) test
