@@ -31,7 +31,19 @@ live-reload so hand-edited config is picked up automatically.
   **1.4 (build 7)** for the config.toml symlink fix below, then to
   **1.4 (build 8)** for disabling Sparkle, then to **1.4 (build 9)** for the
   Smart Alerts scope fix below, then to **1.4 (build 10)** for the login
-  item fix below, then to **1.4 (build 11)** for the quit-safety fix below.
+  item fix below, then to **1.4 (build 11)** for the quit-safety fix below,
+  then to **1.4 (build 12)** for the sleep/wake timer fix below.
+- **Tracking behaved differently after the screen slept once.** Waking from
+  sleep rebuilt the 30s timer to call `trackAndTerminate()` directly instead
+  of reusing the normal `refreshApps()` (which calls `removeTerminatedApps()`
+  first), so an app that quit while the Mac was asleep could still be acted
+  on in the next cycle after waking. Wake now reuses the same `startTimer()`
+  as a normal launch. Also made `removeTerminatedApps`, `initializeRunningApps`,
+  `addLaunchedApps`, and `resetTimeStamps` update `runningApps` synchronously
+  instead of via `DispatchQueue.main.async` — they already only ever run on
+  the main thread, and the deferred update meant a synchronous call right
+  after (e.g. `trackAndTerminate()` following `removeTerminatedApps()` in
+  `refreshApps()`) could still see apps that had just been removed.
 - **The "Quit" notification action could terminate the wrong process.** It
   acted on a PID captured when the notification was created, with no check
   that the process at that PID was still the app the notification named —

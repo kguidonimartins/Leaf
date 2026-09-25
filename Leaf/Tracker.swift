@@ -294,17 +294,20 @@ enum AppMode: String, Codable {
         }
     }
     
+    // Mutates `runningApps` synchronously: every call site (start(),
+    // observers registered with `queue: .main`, and the main-run-loop timer)
+    // already runs on the main thread, so the `DispatchQueue.main.async`
+    // this used to wrap each mutation in only deferred it to a *later* main
+    // thread turn — letting a synchronous call right after (e.g.
+    // trackAndTerminate() following removeTerminatedApps() in refreshApps())
+    // still see stale state.
     private func initializeRunningApps() {
-        
         let apps = NSWorkspace.shared.runningApplications
-        
+
         for app in apps {
             if !isExcludedApp(app: app) {
-                DispatchQueue.main.async {
-//                    print("initializeRunningApps: Added \(app.localizedName!)")
-                    self.runningApps[app] = ProcessInfo.processInfo.systemUptime
-                    self.assignDefaultModeIfNeeded(bundleID: app.bundleIdentifier ?? "")
-                }
+                runningApps[app] = ProcessInfo.processInfo.systemUptime
+                assignDefaultModeIfNeeded(bundleID: app.bundleIdentifier ?? "")
             }
         }
     }
@@ -342,24 +345,20 @@ enum AppMode: String, Codable {
     
     private func addLaunchedApps() {
         let apps = NSWorkspace.shared.runningApplications
-        
+
         for app in apps {
-            if !isExcludedApp(app: app) && self.runningApps[app] == nil {
-                DispatchQueue.main.async {
-                    self.runningApps[app] = ProcessInfo.processInfo.systemUptime
-                    self.assignDefaultModeIfNeeded(bundleID: app.bundleIdentifier ?? "")
-                }
+            if !isExcludedApp(app: app) && runningApps[app] == nil {
+                runningApps[app] = ProcessInfo.processInfo.systemUptime
+                assignDefaultModeIfNeeded(bundleID: app.bundleIdentifier ?? "")
             }
         }
     }
-        
+
     private func removeTerminatedApps() {
         let apps = NSWorkspace.shared.runningApplications
 
         let currentApps = apps.compactMap { $0 }
-        DispatchQueue.main.async {
-            self.runningApps = self.runningApps.filter { currentApps.contains($0.key) }
-        }
+        runningApps = runningApps.filter { currentApps.contains($0.key) }
 
         for app in runningApps.keys {
             if isExcludedApp(app: app) {
@@ -645,45 +644,38 @@ enum AppMode: String, Codable {
     
     private func resetTimeStamps() {
         let apps = NSWorkspace.shared.runningApplications
-        
+
         for app in apps {
             if !isExcludedApp(app: app) {
-                DispatchQueue.main.async {
-                    self.runningApps[app] = ProcessInfo.processInfo.systemUptime
-                }
+                runningApps[app] = ProcessInfo.processInfo.systemUptime
             }
         }
     }
-    
+
     private func asleepAndAwake() {
-        
+
         if (goingToSleep) {
 //            print("About to stop the timer - \(Date())")
-            
+
             sleepStartTime = Date()
             timer?.invalidate()
             timer = nil
-            
+
         } else {
 //            print("About to start the timer again - \(Date())")
-            
+
             let currentTime = Date()
 //            print("Difference = \(currentTime.timeIntervalSince(sleepStartTime))")
-            
+
             if currentTime.timeIntervalSince(sleepStartTime) > 30 {
-                DispatchQueue.main.async {
-                    self.resetTimeStamps()
-                }
+                resetTimeStamps()
             }
-            
-            timer?.invalidate()
-            timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-                guard let self = self else { return }
-                
-                DispatchQueue.main.async {
-                    self.trackAndTerminate()
-                }
-            }
+
+            // Reuse the normal timer (refreshApps -> removeTerminatedApps
+            // then trackAndTerminate) instead of a separate one that called
+            // trackAndTerminate() directly and skipped removeTerminatedApps
+            // — behavior used to diverge the first time the screen slept.
+            startTimer()
         }
     }
     
