@@ -347,7 +347,18 @@ final class ConfigManagerImpl: NSObject {
 
     // MARK: - Side effects
 
+    private static let sideEffectLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.leaf.app", category: "login-item")
+
+    /// The single place that registers/unregisters Leaf as a login item.
+    /// Only calls into SMAppService when `enabled` actually disagrees with
+    /// the real, current registration — not on every config load/apply —
+    /// so this never reverts a login item the user removed by hand in
+    /// System Settings, and never calls `unregister()` on an app that was
+    /// never registered (which SMAppService logs as an error).
     static func applyLaunchAtLogin(_ enabled: Bool) {
+        let alreadyEnabled = SMAppService.mainApp.status == .enabled
+        guard enabled != alreadyEnabled else { return }
+
         do {
             if enabled {
                 try SMAppService.mainApp.register()
@@ -355,7 +366,7 @@ final class ConfigManagerImpl: NSObject {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            print("Leaf: Failed to update login item — \(error)")
+            sideEffectLogger.error("Failed to update login item — \(error.localizedDescription, privacy: .public)")
         }
     }
 

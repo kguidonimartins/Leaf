@@ -41,7 +41,7 @@ struct SettingsView: View {
                 }
                 .toggleStyle(.switch)
                 .onChange(of: launchAtLogin) {
-                    addLoginItem(launchAtLogin: launchAtLogin)
+                    ConfigManagerImpl.applyLaunchAtLogin(launchAtLogin)
                 }
                 
                 toggleSetting(
@@ -91,6 +91,12 @@ struct SettingsView: View {
         }
         .padding()
         .frame(width: 460, height: 500)
+        .onAppear {
+            // UserDefaults can drift from the real registration (e.g. the
+            // user removed Leaf from Login Items in System Settings), so
+            // show the actual status rather than trusting the stored value.
+            launchAtLogin = SMAppService.mainApp.status == .enabled
+        }
         .onDisappear {
             NSApp.setActivationPolicy(.accessory)
         }
@@ -116,17 +122,6 @@ struct SettingsView: View {
         }
     }
     
-    private func addLoginItem(launchAtLogin: Bool) {
-        do {
-            if launchAtLogin == true {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            print("Error occurred: \(error)")
-        }
-    }
 }
 
 #Preview {

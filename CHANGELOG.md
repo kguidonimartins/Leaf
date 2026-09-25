@@ -30,7 +30,19 @@ live-reload so hand-edited config is picked up automatically.
 - **Version** bumped from 1.3 (build 5) to **1.4 (build 6)**, then to
   **1.4 (build 7)** for the config.toml symlink fix below, then to
   **1.4 (build 8)** for disabling Sparkle, then to **1.4 (build 9)** for the
-  Smart Alerts scope fix below.
+  Smart Alerts scope fix below, then to **1.4 (build 10)** for the login
+  item fix below.
+- **The login item was re-registered/unregistered on every config load**,
+  not just when the setting actually changed — including on every TOML
+  edit and every app launch — which could revert a login item the user
+  removed by hand in System Settings › Login Items, and logged a silent
+  error when unregistering an app that was never registered. The logic
+  (previously duplicated between `ConfigManagerImpl` and `SettingsView`) is
+  now in one place and only calls `SMAppService.mainApp.register()`/
+  `unregister()` when the desired state actually disagrees with
+  `SMAppService.mainApp.status`. Settings also now reads that real status
+  when it opens, instead of trusting the stored UserDefaults value, which
+  could otherwise show "on" after the user turned it off outside Leaf.
 - **Smart Alerts now only gates `notify`.** The memory filter previously
   applied to `silentQuit` and `hide` too, contradicting the Settings caption
   ("Only warns you about inactive apps with high memory usage"): an app in
