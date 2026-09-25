@@ -9,7 +9,12 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 4) {
             VStack(alignment: .leading) {
                 if tracker.runningApps.count > 0 {
-                    ForEach(Array(tracker.runningApps), id: \.key) { app in
+                    let sortedApps = tracker.runningApps.sorted {
+                        let lhs = $0.key.localizedName ?? ""
+                        let rhs = $1.key.localizedName ?? ""
+                        return lhs.localizedCaseInsensitiveCompare(rhs) == .orderedAscending
+                    }
+                    ForEach(sortedApps, id: \.key) { app in
                         AppView(app: app, tracker: tracker, mode: tracker.appModes[app.key.bundleIdentifier ?? ""] ?? .notify)
                     }
                 } else {
