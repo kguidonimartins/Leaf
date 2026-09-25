@@ -61,11 +61,17 @@ enum AppMode: String, Codable {
     init(audioMonitor: AudioActivityProviding = AudioActivityMonitor()) {
         self.audioMonitor = audioMonitor
         super.init()
-        if let saved = try? JSONDecoder().decode([String: AppMode].self, from: appModesData),
-           !saved.isEmpty {
-            appModes = saved
-        } else if let legacy = try? JSONDecoder().decode([String: Bool].self, from: nonNotifyAppsData) {
-            appModes = Tracker.migrateLegacyModes(legacy)
+        // Skipped under XCTest: reassigning `appModes` here re-serializes it
+        // through `didSet`, which would write back to the real, shared
+        // UserDefaults domain and schedule a real config.toml save even
+        // though nothing but this instance's construction ran.
+        if !ConfigManager.isRunningTests {
+            if let saved = try? JSONDecoder().decode([String: AppMode].self, from: appModesData),
+               !saved.isEmpty {
+                appModes = saved
+            } else if let legacy = try? JSONDecoder().decode([String: Bool].self, from: nonNotifyAppsData) {
+                appModes = Tracker.migrateLegacyModes(legacy)
+            }
         }
         UNUserNotificationCenter.current().delegate = self
     }

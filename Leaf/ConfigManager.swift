@@ -24,6 +24,13 @@ enum ConfigManager {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".config/leaf/config.toml")
     }
+
+    /// True when this process is hosting the XCTest bundle (`TEST_HOST`).
+    /// Guards every path that could otherwise touch the real user's shared
+    /// UserDefaults domain, config.toml, or login items during `make test`.
+    static var isRunningTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
 }
 
 final class ConfigManagerImpl: NSObject {
@@ -49,7 +56,7 @@ final class ConfigManagerImpl: NSObject {
     }
 
     func notifyAppModesChanged() {
-        guard !suppressSave else { return }
+        guard !suppressSave, !ConfigManager.isRunningTests else { return }
         scheduleSave()
     }
 
@@ -217,8 +224,7 @@ final class ConfigManagerImpl: NSObject {
         }
     }
 
-    static func configFromUserDefaults(appModes: [String: AppMode]) -> LeafConfig {
-        let defaults = UserDefaults.standard
+    static func configFromUserDefaults(appModes: [String: AppMode], defaults: UserDefaults = .standard) -> LeafConfig {
         return LeafConfig(
             launchAtLogin: defaults.bool(forKey: "launchAtLogin"),
             quitWithoutNotify: defaults.bool(forKey: "quitWithoutNotify"),

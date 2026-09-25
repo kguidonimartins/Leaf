@@ -11,7 +11,7 @@ XCODEFLAGS ?=
 
 .PHONY: build release run install test clean resolve
 
-build: test
+build:
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) -derivedDataPath $(DERIVED) $(XCODEFLAGS) build
 
 release:

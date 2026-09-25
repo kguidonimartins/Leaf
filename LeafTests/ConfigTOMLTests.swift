@@ -173,7 +173,12 @@ struct ConfigTOMLTests {
     // MARK: - configFromUserDefaults migration
 
     @Test func configFromUserDefaultsReadsAllKeys() {
-        let defaults = UserDefaults.standard
+        // Uses a disposable suite so this test never touches the shared
+        // com.satwik.Leaf UserDefaults domain of a real, installed Leaf.
+        let suiteName = "com.leaf.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
         defaults.set(true, forKey: "launchAtLogin")
         defaults.set(true, forKey: "quitWithoutNotify")
         defaults.set(60, forKey: "closingTime")
@@ -181,7 +186,7 @@ struct ConfigTOMLTests {
         defaults.set(false, forKey: "detectBackgroundActivity")
         let appModes: [String: AppMode] = ["com.a": .protect]
 
-        let config = ConfigManagerImpl.configFromUserDefaults(appModes: appModes)
+        let config = ConfigManagerImpl.configFromUserDefaults(appModes: appModes, defaults: defaults)
 
         #expect(config.launchAtLogin == true)
         #expect(config.quitWithoutNotify == true)
@@ -189,10 +194,5 @@ struct ConfigTOMLTests {
         #expect(config.smartAlerts == false)
         #expect(config.keepActiveAppsAlive == false)
         #expect(config.appModes["com.a"] == .protect)
-
-        // Cleanup
-        for key in ["launchAtLogin", "quitWithoutNotify", "closingTime", "smartAlerts", "detectBackgroundActivity"] {
-            defaults.removeObject(forKey: key)
-        }
     }
 }

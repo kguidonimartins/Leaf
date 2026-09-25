@@ -33,10 +33,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
+        guard !ConfigManager.isRunningTests else { return }
 
         ConfigManager.shared.configure(tracker: tracker)
         ConfigManager.shared.start()
-        
+
         if isFirstLaunch {
             AppDelegate.showOnboarding()
         } else {
