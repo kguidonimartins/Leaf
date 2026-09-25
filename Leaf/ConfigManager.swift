@@ -54,7 +54,10 @@ final class ConfigManagerImpl: NSObject {
     private var fileDescriptor: Int32 = -1
 
     private var suppressSave = false
-    private var isWritingFile = false
+    // Only ever mutated on `ioQueue` in production (see `scheduleSave` and
+    // `apply`), which is what makes the `write(content:)` comparison against
+    // it race-free without a lock. Tests that call `saveToDisk()` directly
+    // touch it synchronously on their own single thread, which is fine.
     private var lastAppliedContent: String?
 
     init(configURL: URL = ConfigManager.configURL, defaults: UserDefaults = .standard) {
@@ -126,12 +129,22 @@ final class ConfigManagerImpl: NSObject {
         }
     }
 
+    /// Snapshots `tracker.appModes` and `defaults` into an immutable,
+    /// serialized string *on the calling thread* — always the main thread in
+    /// practice, since every production mutation of `tracker.appModes` and
+    /// every `defaults.set` in this app already happens there — and hands
+    /// only that string to `ioQueue`. This is what keeps the I/O queue from
+    /// ever reading `tracker`/`defaults` concurrently with a main-thread
+    /// mutation of them.
     private func scheduleSave(immediate: Bool = false) {
         guard !suppressSave else { return }
 
+        let config = Self.configFromUserDefaults(appModes: tracker?.appModes ?? [:], defaults: defaults)
+        let content = Self.serialize(config)
+
         saveWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.saveToDisk()
+            self?.write(content: content)
         }
         saveWorkItem = work
 
@@ -142,10 +155,19 @@ final class ConfigManagerImpl: NSObject {
         }
     }
 
+    /// Convenience for tests: snapshots and writes synchronously on the
+    /// calling thread. Production code always goes through `scheduleSave`,
+    /// which snapshots on the main thread but performs the write on `ioQueue`.
     func saveToDisk() {
         let config = Self.configFromUserDefaults(appModes: tracker?.appModes ?? [:], defaults: defaults)
-        let content = Self.serialize(config)
+        write(content: Self.serialize(config))
+    }
 
+    /// The actual file I/O: temp write, backup, atomic replace. Touches only
+    /// its `content` parameter and `lastAppliedContent` — never `tracker` or
+    /// `defaults` — so it's safe to run on `ioQueue` concurrently with
+    /// main-thread mutations of those.
+    private func write(content: String) {
         guard content != lastAppliedContent else { return }
 
         ensureConfigDirectoryExists()
@@ -154,9 +176,6 @@ final class ConfigManagerImpl: NSObject {
         // backup live next to that resolved target, not next to the link.
         let targetURL = resolvedConfigURL()
         let tempURL = targetURL.deletingLastPathComponent().appendingPathComponent(".config.toml.tmp")
-
-        isWritingFile = true
-        defer { isWritingFile = false }
 
         do {
             try content.write(to: tempURL, atomically: true, encoding: .utf8)
@@ -175,8 +194,6 @@ final class ConfigManagerImpl: NSObject {
     }
 
     private func reloadFromDiskIfChanged() {
-        guard !isWritingFile else { return }
-
         let url = resolvedConfigURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return }
 
@@ -208,10 +225,15 @@ final class ConfigManagerImpl: NSObject {
             Self.applyLaunchAtLogin(config.launchAtLogin)
         }
 
-        if let sourceContent {
-            lastAppliedContent = sourceContent
-        } else {
-            lastAppliedContent = Self.serialize(config)
+        // Confined to `ioQueue` (see `lastAppliedContent`'s declaration)
+        // rather than set here on the main thread directly. Enqueued before
+        // this function returns, so any `scheduleSave` the caller triggers
+        // right after `apply` (e.g. the first-launch migration path) is
+        // still guaranteed to see this value first, preserving the same
+        // ordering as before — just race-free.
+        let appliedContent = sourceContent ?? Self.serialize(config)
+        ioQueue.async { [weak self] in
+            self?.lastAppliedContent = appliedContent
         }
     }
 
