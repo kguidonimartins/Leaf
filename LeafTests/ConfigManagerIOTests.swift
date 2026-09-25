@@ -92,6 +92,28 @@ struct ConfigManagerIOTests {
         #expect(tracker.appModes["com.example.Loaded"] == .hide)
     }
 
+    @Test func loadingInvalidContentThroughSymlinkLeavesCurrentStateUntouched() throws {
+        // A typo'd header with no version: exactly the shape that used to
+        // silently wipe every app mode on load.
+        let fixture = try makeSymlinkedFixture(initialTargetContent: """
+            [aps]
+            "com.example.Wiped" = "protect"
+            """)
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+
+        fixture.defaults.set(true, forKey: "launchAtLogin")
+        let tracker = Tracker()
+        tracker.appModes = ["com.example.Keep": .protect]
+        fixture.manager.configure(tracker: tracker)
+
+        fixture.manager.loadFromDiskOrMigrate()
+
+        // Nothing from the invalid file should have been applied: the
+        // pre-existing UserDefaults value and tracker state are untouched.
+        #expect(fixture.defaults.bool(forKey: "launchAtLogin") == true)
+        #expect(tracker.appModes == ["com.example.Keep": .protect])
+    }
+
     @Test func resolvedConfigURLFollowsRelativeSymlinkToItsTarget() throws {
         let fixture = try makeSymlinkedFixture(initialTargetContent: "")
         defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }

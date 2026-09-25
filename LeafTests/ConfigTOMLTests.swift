@@ -41,6 +41,10 @@ struct ConfigTOMLTests {
 
     // MARK: - Parse: missing keys fall back to defaults
 
+    // `parse` stays the permissive, always-succeeds low-level parser (used
+    // for round-tripping and by callers that already validated the
+    // content); `validate`/`parseValidated` below are the gate that
+    // load/reload actually use.
     @Test func parseEmptyStringYieldsDefaults() {
         let parsed = ConfigManagerImpl.parse("")
         #expect(parsed == LeafConfig())
@@ -168,6 +172,76 @@ struct ConfigTOMLTests {
         #expect(ConfigManagerImpl.serializeAppMode(.protect) == "protect")
         #expect(ConfigManagerImpl.serializeAppMode(.silentQuit) == "silent_quit")
         #expect(ConfigManagerImpl.serializeAppMode(.hide) == "hide")
+    }
+
+    // MARK: - Validation: empty / missing version is rejected
+
+    @Test func validateRejectsEmptyOrWhitespaceOnlyContent() {
+        #expect(ConfigManagerImpl.validate("") == .empty)
+        #expect(ConfigManagerImpl.validate("   \n\n\t  ") == .empty)
+    }
+
+    @Test func validateRejectsContentMissingVersion() {
+        let toml = """
+            [general]
+            launch_at_login = true
+            """
+        #expect(ConfigManagerImpl.validate(toml) == .missingOrUnsupportedVersion)
+    }
+
+    @Test func validateRejectsTypoedSectionHeaderWithNoVersion() {
+        // The bug this guards against: a typo'd `[apps]` header (here
+        // `[aps]`) used to silently parse into a config with every app mode
+        // wiped, and that got applied and re-saved as if it were correct.
+        let toml = """
+            [aps]
+            "com.example.App" = "protect"
+            """
+        #expect(ConfigManagerImpl.validate(toml) == .missingOrUnsupportedVersion)
+    }
+
+    @Test func validateAcceptsWellFormedContent() {
+        let toml = """
+            version = 1
+
+            [general]
+            launch_at_login = true
+            """
+        #expect(ConfigManagerImpl.validate(toml) == nil)
+    }
+
+    @Test func parseValidatedFailsClosedForInvalidContent() {
+        switch ConfigManagerImpl.parseValidated("") {
+        case .success:
+            Issue.record("expected .failure for empty content")
+        case .failure(let error):
+            #expect(error == .empty)
+        }
+    }
+
+    @Test func parseValidatedSucceedsAndSurfacesWarningsForUnknownExtras() {
+        let toml = """
+            version = 1
+
+            [general]
+            launch_at_login = true
+            mystery_key = 1
+
+            [apps]
+            "com.example.App" = "bogus_mode"
+
+            [bogus]
+            something = "else"
+            """
+        switch ConfigManagerImpl.parseValidated(toml) {
+        case .success(let parsed):
+            #expect(parsed.config.launchAtLogin == true)
+            #expect(parsed.warnings.contains("unknown key 'mystery_key' in [general]"))
+            #expect(parsed.warnings.contains { $0.contains("bogus_mode") })
+            #expect(parsed.warnings.contains("unknown section [bogus]"))
+        case .failure:
+            Issue.record("expected .success for otherwise well-formed content")
+        }
     }
 
     // MARK: - configFromUserDefaults migration

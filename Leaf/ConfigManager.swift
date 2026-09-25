@@ -99,14 +99,31 @@ final class ConfigManagerImpl: NSObject {
 
         if FileManager.default.fileExists(atPath: url.path),
            let content = try? String(contentsOf: url, encoding: .utf8) {
-            let parsed = Self.parse(content)
-            apply(parsed, sourceContent: content)
+            applyValidatedContentOrKeepCurrent(content)
             return
         }
 
         let migrated = Self.configFromUserDefaults(appModes: tracker?.appModes ?? [:], defaults: defaults)
         apply(migrated, sourceContent: nil)
         scheduleSave(immediate: true)
+    }
+
+    /// Parses and validates `content`; applies it only when valid. An empty
+    /// file or one missing `version = 1` (e.g. a typo'd `[apps]` header that
+    /// silently dropped every app mode) is left entirely untouched: nothing
+    /// is applied, `lastAppliedContent` isn't updated, and the next save
+    /// still reflects whatever was last known-good, instead of baking the
+    /// loss into UserDefaults and then into the file itself.
+    private func applyValidatedContentOrKeepCurrent(_ content: String) {
+        switch Self.parseValidated(content) {
+        case .success(let parsed):
+            for warning in parsed.warnings {
+                logger.notice("config.toml: \(warning, privacy: .public)")
+            }
+            apply(parsed.config, sourceContent: content)
+        case .failure(let error):
+            logger.error("config.toml is invalid, keeping current settings — \(error.description, privacy: .public)")
+        }
     }
 
     private func scheduleSave(immediate: Bool = false) {
@@ -166,9 +183,8 @@ final class ConfigManagerImpl: NSObject {
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
             guard content != lastAppliedContent else { return }
-            let parsed = Self.parse(content)
             DispatchQueue.main.async { [weak self] in
-                self?.apply(parsed, sourceContent: content)
+                self?.applyValidatedContentOrKeepCurrent(content)
             }
         } catch {
             logger.error("Failed to reload config.toml — \(error.localizedDescription, privacy: .public)")
@@ -332,11 +348,83 @@ final class ConfigManagerImpl: NSObject {
         )
     }
 
+    // MARK: - TOML validation
+
+    enum ConfigValidationError: Error, Equatable, CustomStringConvertible {
+        /// The file is empty (or whitespace-only): nothing to apply.
+        case empty
+        /// No top-level `version = 1` was found. Catches both a genuinely
+        /// missing version and the case that motivated this check: a typo'd
+        /// section header (e.g. `[aps]` instead of `[apps]`) that would
+        /// otherwise silently parse into an empty/partial config and wipe
+        /// every app mode.
+        case missingOrUnsupportedVersion
+
+        var description: String {
+            switch self {
+            case .empty: return "config.toml is empty"
+            case .missingOrUnsupportedVersion: return "config.toml is missing 'version = 1'"
+            }
+        }
+    }
+
+    struct ParsedConfig {
+        var config: LeafConfig
+        /// Non-fatal issues (unknown sections/keys/app modes) worth logging,
+        /// but that don't invalidate an otherwise well-formed file — keeps
+        /// forward/backward compatibility with keys this build doesn't know.
+        var warnings: [String] = []
+    }
+
+    /// Checks the two hard requirements — non-empty, and a recognized
+    /// `version = 1` — without fully parsing. Returns `nil` when valid.
+    static func validate(_ content: String) -> ConfigValidationError? {
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .empty
+        }
+
+        var section = ""
+        for rawLine in content.components(separatedBy: .newlines) {
+            let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else { continue }
+
+            if line.hasPrefix("[") && line.hasSuffix("]") {
+                section = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                continue
+            }
+
+            guard section.isEmpty, let separator = line.firstIndex(of: "=") else { continue }
+            let rawKey = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
+            let rawValue = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
+            let key = parseStringToken(rawKey) ?? rawKey
+            if key == "version", parseValue(rawValue) == "1" {
+                return nil
+            }
+        }
+        return .missingOrUnsupportedVersion
+    }
+
+    /// Validates, then parses with diagnostics. This is what load/reload
+    /// should use; `parse(_:)` stays the permissive, always-succeeds parser
+    /// used for round-tripping and by callers that already know the content
+    /// is well-formed (e.g. immediately after `serialize`).
+    static func parseValidated(_ content: String) -> Result<ParsedConfig, ConfigValidationError> {
+        if let error = validate(content) {
+            return .failure(error)
+        }
+        return .success(parseWithDiagnostics(content))
+    }
+
     // MARK: - TOML parse / serialize (pure)
 
     static func parse(_ content: String) -> LeafConfig {
+        parseWithDiagnostics(content).config
+    }
+
+    private static func parseWithDiagnostics(_ content: String) -> ParsedConfig {
         var config = LeafConfig()
         var section = ""
+        var warnings: [String] = []
 
         for rawLine in content.components(separatedBy: .newlines) {
             let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
@@ -344,6 +432,9 @@ final class ConfigManagerImpl: NSObject {
 
             if line.hasPrefix("[") && line.hasSuffix("]") {
                 section = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                if section != "general" && section != "apps" {
+                    warnings.append("unknown section [\(section)]")
+                }
                 continue
             }
 
@@ -355,20 +446,26 @@ final class ConfigManagerImpl: NSObject {
 
             switch section {
             case "general":
-                applyGeneralKey(key, value: value, to: &config)
+                if !applyGeneralKey(key, value: value, to: &config) {
+                    warnings.append("unknown key '\(key)' in [general]")
+                }
             case "apps":
                 if let mode = parseAppMode(value) {
                     config.appModes[key] = mode
+                } else {
+                    warnings.append("unknown app mode '\(value)' for '\(key)'")
                 }
             case "":
-                if key == "version" { continue }
+                if key != "version" {
+                    warnings.append("unknown top-level key '\(key)'")
+                }
             default:
-                continue
+                break
             }
         }
 
         config.notifyAfterMinutes = clampNotifyMinutes(config.notifyAfterMinutes)
-        return config
+        return ParsedConfig(config: config, warnings: warnings)
     }
 
     static func serialize(_ config: LeafConfig) -> String {
@@ -397,7 +494,10 @@ final class ConfigManagerImpl: NSObject {
         return lines.joined(separator: "\n")
     }
 
-    private static func applyGeneralKey(_ key: String, value: String, to config: inout LeafConfig) {
+    /// Applies a recognized `[general]` key to `config`, returning whether
+    /// the key was recognized (regardless of whether its value parsed).
+    @discardableResult
+    private static func applyGeneralKey(_ key: String, value: String, to config: inout LeafConfig) -> Bool {
         switch key {
         case "launch_at_login":
             config.launchAtLogin = parseBool(value) ?? config.launchAtLogin
@@ -412,8 +512,9 @@ final class ConfigManagerImpl: NSObject {
         case "keep_active_apps_alive":
             config.keepActiveAppsAlive = parseBool(value) ?? config.keepActiveAppsAlive
         default:
-            break
+            return false
         }
+        return true
     }
 
     private static func stripComment(_ line: String) -> String {
