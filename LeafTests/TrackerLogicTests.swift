@@ -80,7 +80,9 @@ struct TrackerLogicTests {
         #expect(action == .quit)
     }
 
-    @Test func nonMemoryConsumingIsIgnoredForNotifyAndSilentQuit() {
+    @Test func nonMemoryConsumingIsIgnoredOnlyForNotify() {
+        // Smart Alerts' memory filter only gates `notify` (matching the
+        // Settings caption); silentQuit and hide act on idle time alone.
         let notify = Tracker.decideAction(
             mode: .notify,
             idleTime: TimeInterval(16 * 60),
@@ -96,7 +98,7 @@ struct TrackerLogicTests {
             alreadyNotified: false
         )
         #expect(notify == .ignore)
-        #expect(silent == .ignore)
+        #expect(silent == .quit)
     }
 
     @Test func hideTriggersWhenIdleExceededAndMemoryConsuming() {
@@ -110,7 +112,8 @@ struct TrackerLogicTests {
         #expect(action == .hide)
     }
 
-    @Test func hideIgnoresWhenNotMemoryConsuming() {
+    @Test func hideTriggersEvenWhenNotMemoryConsuming() {
+        // Unlike notify, hide is unaffected by the Smart Alerts memory filter.
         let action = Tracker.decideAction(
             mode: .hide,
             idleTime: TimeInterval(16 * 60),
@@ -118,7 +121,7 @@ struct TrackerLogicTests {
             isMemoryConsuming: false,
             alreadyNotified: false
         )
-        #expect(action == .ignore)
+        #expect(action == .hide)
     }
 
     @Test func hideIgnoresBelowIdleThreshold() {

@@ -29,7 +29,14 @@ live-reload so hand-edited config is picked up automatically.
 ### Changed
 - **Version** bumped from 1.3 (build 5) to **1.4 (build 6)**, then to
   **1.4 (build 7)** for the config.toml symlink fix below, then to
-  **1.4 (build 8)** for disabling Sparkle.
+  **1.4 (build 8)** for disabling Sparkle, then to **1.4 (build 9)** for the
+  Smart Alerts scope fix below.
+- **Smart Alerts now only gates `notify`.** The memory filter previously
+  applied to `silentQuit` and `hide` too, contradicting the Settings caption
+  ("Only warns you about inactive apps with high memory usage"): an app in
+  `silentQuit` or `hide` below the 200 MB threshold was never touched no
+  matter how long it sat idle. Those two modes now act on idle time alone;
+  only `notify` is filtered by memory usage.
 - **Sparkle auto-update is disabled in this fork.** This repository still
   ships with the upstream author's `SUFeedURL`/`SUPublicEDKey` and bundle ID
   (`com.satwik.Leaf`); starting the updater against that feed would offer

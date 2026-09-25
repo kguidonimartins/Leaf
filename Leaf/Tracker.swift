@@ -112,16 +112,20 @@ enum AppMode: String, Codable {
     }
     
     /// Decides what to do with a single inactive app given its mode and state.
+    /// The Smart Alerts memory filter (`isMemoryConsuming`) only gates
+    /// `notify`, matching the Settings caption ("Only warns you about
+    /// inactive apps with high memory usage") — `silentQuit` and `hide` act
+    /// on idle time alone, regardless of memory usage.
     static func decideAction(mode: AppMode,
                              idleTime: TimeInterval,
                              closingTimeMinutes: Int,
                              isMemoryConsuming: Bool,
                              alreadyNotified: Bool) -> IdleAction {
         if mode == .protect { return .ignore }
-        
+
         let exceededIdle = idleTime > TimeInterval(closingTimeMinutes * 60)
-        guard exceededIdle, isMemoryConsuming else { return .ignore }
-        
+        guard exceededIdle else { return .ignore }
+
         switch mode {
         case .protect:
             return .ignore
@@ -130,6 +134,7 @@ enum AppMode: String, Codable {
         case .hide:
             return .hide
         case .notify:
+            guard isMemoryConsuming else { return .ignore }
             return alreadyNotified ? .ignore : .notify
         }
     }
