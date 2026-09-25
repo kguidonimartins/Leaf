@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import ServiceManagement
+import os
 
 struct LeafConfig: Equatable {
     var launchAtLogin: Bool = false
@@ -36,14 +37,31 @@ enum ConfigManager {
 final class ConfigManagerImpl: NSObject {
     private weak var tracker: Tracker?
 
+    /// Where `config.toml` (or a symlink to it) lives. Injectable so tests
+    /// can point I/O at a scratch directory instead of the real
+    /// `~/.config/leaf`.
+    private let configURL: URL
+    /// UserDefaults domain mirrored to/from config.toml. Injectable so tests
+    /// never read or write the real, shared `com.satwik.Leaf` domain.
+    private let defaults: UserDefaults
+
     private let ioQueue = DispatchQueue(label: "com.leaf.config.io")
+    private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.leaf.app", category: "config")
     private var saveWorkItem: DispatchWorkItem?
     private var directoryWatcher: DispatchSourceFileSystemObject?
-    private var configFileDescriptor: Int32 = -1
+    private var directoryFileDescriptor: Int32 = -1
+    private var fileWatcher: DispatchSourceFileSystemObject?
+    private var fileDescriptor: Int32 = -1
 
     private var suppressSave = false
     private var isWritingFile = false
     private var lastAppliedContent: String?
+
+    init(configURL: URL = ConfigManager.configURL, defaults: UserDefaults = .standard) {
+        self.configURL = configURL
+        self.defaults = defaults
+        super.init()
+    }
 
     func configure(tracker: Tracker) {
         self.tracker = tracker
@@ -53,6 +71,7 @@ final class ConfigManagerImpl: NSObject {
         loadFromDiskOrMigrate()
         startObservingUserDefaults()
         startDirectoryWatcher()
+        startFileWatcher()
     }
 
     func notifyAppModesChanged() {
@@ -62,8 +81,20 @@ final class ConfigManagerImpl: NSObject {
 
     // MARK: - Load / save
 
-    private func loadFromDiskOrMigrate() {
-        let url = ConfigManager.configURL
+    /// `configURL` with any symlinks resolved to their real target (e.g. a
+    /// dotfiles repo). Writes and reads must go through this so a symlinked
+    /// config.toml gets its target updated in place instead of being
+    /// replaced by a plain file, which would silently sever the link.
+    func resolvedConfigURL() -> URL {
+        configURL.resolvingSymlinksInPath()
+    }
+
+    // `internal` (not `private`) below so `@testable import Leaf` can drive
+    // I/O synchronously against an injected scratch `configURL`, without
+    // going through the singleton/observer glue that's deliberately gated
+    // behind `ConfigManager.isRunningTests`.
+    func loadFromDiskOrMigrate() {
+        let url = resolvedConfigURL()
         ensureConfigDirectoryExists()
 
         if FileManager.default.fileExists(atPath: url.path),
@@ -73,7 +104,7 @@ final class ConfigManagerImpl: NSObject {
             return
         }
 
-        let migrated = Self.configFromUserDefaults(appModes: tracker?.appModes ?? [:])
+        let migrated = Self.configFromUserDefaults(appModes: tracker?.appModes ?? [:], defaults: defaults)
         apply(migrated, sourceContent: nil)
         scheduleSave(immediate: true)
     }
@@ -94,30 +125,34 @@ final class ConfigManagerImpl: NSObject {
         }
     }
 
-    private func saveToDisk() {
-        let config = Self.configFromUserDefaults(appModes: tracker?.appModes ?? [:])
+    func saveToDisk() {
+        let config = Self.configFromUserDefaults(appModes: tracker?.appModes ?? [:], defaults: defaults)
         let content = Self.serialize(config)
 
         guard content != lastAppliedContent else { return }
 
         ensureConfigDirectoryExists()
-        let url = ConfigManager.configURL
-        let tempURL = url.deletingLastPathComponent().appendingPathComponent(".config.toml.tmp")
+        // Resolved *before* writing so a symlinked config.toml (e.g. into a
+        // dotfiles repo) gets its target updated in place; the temp file and
+        // backup live next to that resolved target, not next to the link.
+        let targetURL = resolvedConfigURL()
+        let tempURL = targetURL.deletingLastPathComponent().appendingPathComponent(".config.toml.tmp")
 
         isWritingFile = true
         defer { isWritingFile = false }
 
         do {
             try content.write(to: tempURL, atomically: true, encoding: .utf8)
-            if FileManager.default.fileExists(atPath: url.path) {
-                let backupURL = url.deletingLastPathComponent().appendingPathComponent("config.toml.bak")
+            if FileManager.default.fileExists(atPath: targetURL.path) {
+                let backupURL = targetURL.deletingLastPathComponent().appendingPathComponent("config.toml.bak")
                 try? FileManager.default.removeItem(at: backupURL)
-                try? FileManager.default.copyItem(at: url, to: backupURL)
+                try? FileManager.default.copyItem(at: targetURL, to: backupURL)
             }
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
+            _ = try FileManager.default.replaceItemAt(targetURL, withItemAt: tempURL)
             lastAppliedContent = content
+            rearmFileWatcher()
         } catch {
-            print("Leaf: Failed to write config.toml — \(error)")
+            logger.error("Failed to write config.toml — \(error.localizedDescription, privacy: .public)")
             try? FileManager.default.removeItem(at: tempURL)
         }
     }
@@ -125,7 +160,7 @@ final class ConfigManagerImpl: NSObject {
     private func reloadFromDiskIfChanged() {
         guard !isWritingFile else { return }
 
-        let url = ConfigManager.configURL
+        let url = resolvedConfigURL()
         guard FileManager.default.fileExists(atPath: url.path) else { return }
 
         do {
@@ -136,7 +171,7 @@ final class ConfigManagerImpl: NSObject {
                 self?.apply(parsed, sourceContent: content)
             }
         } catch {
-            print("Leaf: Failed to reload config.toml — \(error)")
+            logger.error("Failed to reload config.toml — \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -144,7 +179,6 @@ final class ConfigManagerImpl: NSObject {
         suppressSave = true
         defer { suppressSave = false }
 
-        let defaults = UserDefaults.standard
         defaults.set(config.launchAtLogin, forKey: "launchAtLogin")
         defaults.set(config.quitWithoutNotify, forKey: "quitWithoutNotify")
         defaults.set(config.notifyAfterMinutes, forKey: "closingTime")
@@ -153,7 +187,10 @@ final class ConfigManagerImpl: NSObject {
 
         tracker?.appModes = config.appModes
 
-        Self.applyLaunchAtLogin(config.launchAtLogin)
+        // Never touch the real login item registration from a test process.
+        if !ConfigManager.isRunningTests {
+            Self.applyLaunchAtLogin(config.launchAtLogin)
+        }
 
         if let sourceContent {
             lastAppliedContent = sourceContent
@@ -163,7 +200,7 @@ final class ConfigManagerImpl: NSObject {
     }
 
     private func ensureConfigDirectoryExists() {
-        let dir = ConfigManager.configURL.deletingLastPathComponent()
+        let dir = configURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
@@ -185,29 +222,89 @@ final class ConfigManagerImpl: NSObject {
 
     // MARK: - File watcher
 
+    /// Watches `~/.config/leaf` itself: catches the symlink (or config.toml)
+    /// being created, replaced, or removed — events that never touch the
+    /// resolved target's own directory when that target lives elsewhere
+    /// (e.g. a dotfiles repo), and which the file watcher below can't see
+    /// before a file even exists.
     private func startDirectoryWatcher() {
-        let dir = ConfigManager.configURL.deletingLastPathComponent()
+        let dir = configURL.deletingLastPathComponent()
         ensureConfigDirectoryExists()
 
-        configFileDescriptor = open(dir.path, O_EVTONLY)
-        guard configFileDescriptor >= 0 else { return }
+        let dirFD = open(dir.path, O_EVTONLY)
+        guard dirFD >= 0 else { return }
+        directoryFileDescriptor = dirFD
 
         let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: configFileDescriptor,
+            fileDescriptor: dirFD,
             eventMask: [.write, .rename, .delete, .extend, .attrib, .link],
             queue: ioQueue
         )
         source.setEventHandler { [weak self] in
             self?.reloadFromDiskIfChanged()
+            // The symlink itself (or config.toml) may have just been
+            // created, removed, or repointed — make sure the file watcher
+            // tracks whatever now resolves at configURL.
+            self?.rearmFileWatcher()
         }
+        // Closes exactly the fd this source opened (captured by value), not
+        // whatever `directoryFileDescriptor` holds when the cancel handler
+        // finally runs — a rearm may have already overwritten it by then,
+        // since both run serially on the same ioQueue.
         source.setCancelHandler { [weak self] in
-            if let fd = self?.configFileDescriptor, fd >= 0 {
-                close(fd)
-                self?.configFileDescriptor = -1
+            close(dirFD)
+            if self?.directoryFileDescriptor == dirFD {
+                self?.directoryFileDescriptor = -1
             }
         }
         directoryWatcher = source
         source.resume()
+    }
+
+    /// Watches the resolved target file directly, so an editor that saves in
+    /// place (write, no rename) — which a directory-level watch won't catch —
+    /// is still picked up, including when the target lives outside
+    /// `~/.config/leaf` (a symlinked dotfiles repo).
+    private func startFileWatcher() {
+        let resolved = resolvedConfigURL()
+        guard FileManager.default.fileExists(atPath: resolved.path) else { return }
+
+        let fd = open(resolved.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        fileDescriptor = fd
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .delete, .rename, .attrib, .link],
+            queue: ioQueue
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let events = source.data
+            self.reloadFromDiskIfChanged()
+            // Many editors save by writing a new inode and renaming it into
+            // place; the fd we opened then points at the old, unlinked
+            // inode and stops seeing further writes, so reopen on the path.
+            if events.contains(.delete) || events.contains(.rename) {
+                self.rearmFileWatcher()
+            }
+        }
+        // Closes exactly the fd this source opened (captured by value); see
+        // the matching comment on the directory watcher's cancel handler.
+        source.setCancelHandler { [weak self] in
+            close(fd)
+            if self?.fileDescriptor == fd {
+                self?.fileDescriptor = -1
+            }
+        }
+        fileWatcher = source
+        source.resume()
+    }
+
+    private func rearmFileWatcher() {
+        fileWatcher?.cancel()
+        fileWatcher = nil
+        startFileWatcher()
     }
 
     // MARK: - Side effects

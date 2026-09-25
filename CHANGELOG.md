@@ -27,7 +27,26 @@ live-reload so hand-edited config is picked up automatically.
   current UserDefaults values.
 
 ### Changed
-- **Version** bumped from 1.3 (build 5) to **1.4 (build 6)**.
+- **Version** bumped from 1.3 (build 5) to **1.4 (build 6)**, then to
+  **1.4 (build 7)** for the config.toml symlink fix below.
+
+### Fixed
+- **`config.toml` as a symlink (e.g. into a dotfiles repo) silently broke
+  saving.** Writes replaced the link itself instead of updating its target,
+  which failed outright, made `config.toml.bak` a copy of the link (so it
+  protected nothing), and meant every launch re-applied the stale on-disk
+  TOML over the user's real settings. Saves and reloads now resolve the
+  symlink first and read/write through to the real target, preserving the
+  link; the backup is a real file with the previous content. The live-reload
+  watcher also now watches the resolved target file directly (not just its
+  containing directory), so in-place edits from an editor that doesn't
+  rename-on-save are picked up too.
+- **`make test` mutated the real, shared UserDefaults domain and could
+  schedule a real config.toml write.** The suite runs hosted inside the
+  actual Leaf.app bundle ID; constructing the app's `Tracker` alone was
+  enough to touch `UserDefaults.standard`. Test-hosting paths are now
+  skipped behind a `XCTestConfigurationFilePath` check, and `make build` no
+  longer runs the suite as a side effect of `make test` being a dependency.
 
 ## [1.3]
 

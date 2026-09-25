@@ -34,6 +34,12 @@ enum AppMode: String, Codable {
     
     var appModes: [String : AppMode] = [:] {
         didSet {
+            // `appModesData` is an `@AppStorage` (always backed by
+            // `UserDefaults.standard`, regardless of which Tracker instance
+            // this is), so skip the write under XCTest — otherwise a Tracker
+            // built for a scratch-directory ConfigManagerImpl test would
+            // still touch the real, shared UserDefaults domain.
+            guard !ConfigManager.isRunningTests else { return }
             if let encoded = try? JSONEncoder().encode(appModes) {
                 appModesData = encoded
             }
