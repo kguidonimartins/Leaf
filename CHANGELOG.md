@@ -98,6 +98,10 @@ live-reload so hand-edited config is picked up automatically.
   in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
+- **Invalid config.toml edits no longer erase app modes.** The whole file is
+  checked before applying it; malformed values, duplicate keys, and unknown
+  section headers are rejected while the last valid settings stay active. An
+  empty `[apps]` section remains the explicit way to clear every app mode.
 - **`config.toml` as a symlink (e.g. into a dotfiles repo) silently broke
   saving.** Writes replaced the link itself instead of updating its target,
   which failed outright, made `config.toml.bak` a copy of the link (so it

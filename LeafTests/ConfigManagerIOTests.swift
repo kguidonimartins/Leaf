@@ -114,6 +114,38 @@ struct ConfigManagerIOTests {
         #expect(tracker.appModes == ["com.example.Keep": .protect])
     }
 
+    @Test(arguments: [
+        "version = 1\n[apps]\n\"com.example.Keep\" = \"protect",
+        "version = 1\n[aps]\n\"com.example.Keep\" = \"protect\"",
+        "version = 1\n[general]\nsmart_alerts = perhaps\n[apps]",
+        "version = 1\n[apps]\n\"com.example.Keep\" = \"unknown\"",
+        "version = 1\n[apps]\n\"com.example.Keep\" = \"protect\"\n\"com.example.Keep\" = \"hide\"",
+    ])
+    func malformedFileKeepsModesAndDiskContent(_ content: String) throws {
+        let fixture = try makeSymlinkedFixture(initialTargetContent: content)
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+        let tracker = Tracker()
+        tracker.appModes = ["com.example.Keep": .protect]
+        fixture.manager.configure(tracker: tracker)
+
+        fixture.manager.loadFromDiskOrMigrate()
+
+        #expect(tracker.appModes == ["com.example.Keep": .protect])
+        #expect(try String(contentsOf: fixture.targetURL, encoding: .utf8) == content)
+    }
+
+    @Test func emptyAppsSectionClearsModesOnLoad() throws {
+        let fixture = try makeSymlinkedFixture(initialTargetContent: "version = 1\n[apps]\n")
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+        let tracker = Tracker()
+        tracker.appModes = ["com.example.Keep": .protect]
+        fixture.manager.configure(tracker: tracker)
+
+        fixture.manager.loadFromDiskOrMigrate()
+
+        #expect(tracker.appModes.isEmpty)
+    }
+
     @Test func resolvedConfigURLFollowsRelativeSymlinkToItsTarget() throws {
         let fixture = try makeSymlinkedFixture(initialTargetContent: "")
         defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }

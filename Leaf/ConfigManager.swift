@@ -392,11 +392,13 @@ final class ConfigManagerImpl: NSObject {
         /// otherwise silently parse into an empty/partial config and wipe
         /// every app mode.
         case missingOrUnsupportedVersion
+        case malformed(line: Int, reason: String)
 
         var description: String {
             switch self {
             case .empty: return "config.toml is empty"
             case .missingOrUnsupportedVersion: return "config.toml is missing 'version = 1'"
+            case .malformed(let line, let reason): return "line \(line): \(reason)"
             }
         }
     }
@@ -409,32 +411,114 @@ final class ConfigManagerImpl: NSObject {
         var warnings: [String] = []
     }
 
-    /// Checks the two hard requirements — non-empty, and a recognized
-    /// `version = 1` — without fully parsing. Returns `nil` when valid.
+    /// Rejects malformed known settings before any of them can replace the
+    /// current configuration. An empty [apps] intentionally clears all modes;
+    /// unknown sections are rejected because [aps] is otherwise destructive.
     static func validate(_ content: String) -> ConfigValidationError? {
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .empty
         }
 
         var section = ""
-        for rawLine in content.components(separatedBy: .newlines) {
+        var sawVersion = false
+        var seenKeys: [String: Set<String>] = [:]
+        for (offset, rawLine) in content.components(separatedBy: .newlines).enumerated() {
+            let lineNumber = offset + 1
             let line = stripComment(rawLine).trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
 
-            if line.hasPrefix("[") && line.hasSuffix("]") {
+            if line.hasPrefix("[") {
+                guard line.hasSuffix("]") else {
+                    return .malformed(line: lineNumber, reason: "invalid section header")
+                }
                 section = String(line.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+                guard section == "general" || section == "apps" else {
+                    return .malformed(line: lineNumber, reason: "unknown section [\(section)]")
+                }
+                guard seenKeys[section] == nil else {
+                    return .malformed(line: lineNumber, reason: "duplicate section [\(section)]")
+                }
+                seenKeys[section] = []
                 continue
             }
 
-            guard section.isEmpty, let separator = line.firstIndex(of: "=") else { continue }
+            guard let separator = unquotedSeparator(in: line) else {
+                return .malformed(line: lineNumber, reason: "expected key = value")
+            }
             let rawKey = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
             let rawValue = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
-            let key = parseStringToken(rawKey) ?? rawKey
-            if key == "version", parseValue(rawValue) == "1" {
-                return nil
+            guard let key = parseStringTokenStrict(rawKey), !key.isEmpty,
+                  let value = parseStringTokenStrict(rawValue) else {
+                return .malformed(line: lineNumber, reason: "invalid key or value")
+            }
+            guard !(seenKeys[section] ?? []).contains(key) else {
+                return .malformed(line: lineNumber, reason: "duplicate key '\(key)'")
+            }
+            seenKeys[section, default: []].insert(key)
+
+            switch section {
+            case "":
+                if key == "version" {
+                    guard rawValue == "1" else { return .missingOrUnsupportedVersion }
+                    sawVersion = true
+                }
+            case "general":
+                switch key {
+                case "launch_at_login", "quit_without_notify", "smart_alerts", "keep_active_apps_alive":
+                    guard rawValue == "true" || rawValue == "false" else {
+                        return .malformed(line: lineNumber, reason: "invalid Boolean for '\(key)'")
+                    }
+                case "notify_after_minutes":
+                    guard Int(rawValue) != nil else {
+                        return .malformed(line: lineNumber, reason: "invalid integer for '\(key)'")
+                    }
+                default: break
+                }
+            case "apps":
+                guard parseAppMode(value) != nil else {
+                    return .malformed(line: lineNumber, reason: "invalid mode for '\(key)'")
+                }
+            default: break
             }
         }
-        return .missingOrUnsupportedVersion
+        return sawVersion ? nil : .missingOrUnsupportedVersion
+    }
+
+    private static func unquotedSeparator(in line: String) -> String.Index? {
+        var quoted = false
+        var escaped = false
+        for index in line.indices {
+            let character = line[index]
+            if escaped { escaped = false; continue }
+            if character == "\\", quoted { escaped = true; continue }
+            if character == "\"" { quoted.toggle(); continue }
+            if character == "=", !quoted { return index }
+        }
+        return nil
+    }
+
+    private static func parseStringTokenStrict(_ raw: String) -> String? {
+        guard !raw.isEmpty else { return nil }
+        guard raw.hasPrefix("\"") else {
+            return raw.contains("\"") ? nil : raw
+        }
+        guard raw.hasSuffix("\""), raw.count >= 2 else { return nil }
+        var result = ""
+        var escaped = false
+        for character in raw.dropFirst().dropLast() {
+            if escaped {
+                guard character == "\"" || character == "\\" else { return nil }
+                result.append(character)
+                escaped = false
+            } else if character == "\\" {
+                escaped = true
+            } else if character == "\"" {
+                return nil
+            } else {
+                result.append(character)
+            }
+        }
+        return escaped ? nil : result
     }
 
     /// Validates, then parses with diagnostics. This is what load/reload
@@ -471,7 +555,7 @@ final class ConfigManagerImpl: NSObject {
                 continue
             }
 
-            guard let separator = line.firstIndex(of: "=") else { continue }
+            guard let separator = unquotedSeparator(in: line) else { continue }
             let rawKey = String(line[..<separator]).trimmingCharacters(in: .whitespaces)
             let rawValue = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
             let key = parseStringToken(rawKey) ?? rawKey

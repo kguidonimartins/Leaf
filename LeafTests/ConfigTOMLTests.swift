@@ -197,7 +197,7 @@ struct ConfigTOMLTests {
             [aps]
             "com.example.App" = "protect"
             """
-        #expect(ConfigManagerImpl.validate(toml) == .missingOrUnsupportedVersion)
+        #expect(ConfigManagerImpl.validate(toml) != nil)
     }
 
     @Test func validateAcceptsWellFormedContent() {
@@ -219,7 +219,7 @@ struct ConfigTOMLTests {
         }
     }
 
-    @Test func parseValidatedSucceedsAndSurfacesWarningsForUnknownExtras() {
+    @Test func parseValidatedSucceedsAndSurfacesWarningsForUnknownKeys() {
         let toml = """
             version = 1
 
@@ -228,19 +228,40 @@ struct ConfigTOMLTests {
             mystery_key = 1
 
             [apps]
-            "com.example.App" = "bogus_mode"
-
-            [bogus]
-            something = "else"
+            "com.example.App" = "protect"
             """
         switch ConfigManagerImpl.parseValidated(toml) {
         case .success(let parsed):
             #expect(parsed.config.launchAtLogin == true)
             #expect(parsed.warnings.contains("unknown key 'mystery_key' in [general]"))
-            #expect(parsed.warnings.contains { $0.contains("bogus_mode") })
-            #expect(parsed.warnings.contains("unknown section [bogus]"))
+            #expect(parsed.config.appModes["com.example.App"] == .protect)
         case .failure:
             Issue.record("expected .success for otherwise well-formed content")
+        }
+    }
+
+    @Test(arguments: [
+        "version = 1\n[apps]\n\"com.example.Keep\" = \"protect",
+        "version = 1\n[apps",
+        "version = 1\n[aps]\n\"com.example.Keep\" = \"protect\"",
+        "version = 1\n[apps]\n\"com.example.Keep\" = \"invalid\"",
+        "version = 1\n[general]\nsmart_alerts = maybe",
+        "version = 1\n[general]\nnotify_after_minutes = soon",
+        "version = 1\n[apps]\n\"com.example.Keep\" = \"protect\"\n\"com.example.Keep\" = \"hide\"",
+        "version = 1\n[general]\nsmart_alerts = true\nsmart_alerts = false",
+    ])
+    func parseValidatedRejectsMalformedContent(_ content: String) {
+        #expect(ConfigManagerImpl.validate(content) != nil)
+        if case .success = ConfigManagerImpl.parseValidated(content) {
+            Issue.record("malformed content was accepted")
+        }
+    }
+
+    @Test func emptyAppsSectionIntentionallyRemovesModes() {
+        let content = "version = 1\n[apps]\n"
+        switch ConfigManagerImpl.parseValidated(content) {
+        case .success(let parsed): #expect(parsed.config.appModes.isEmpty)
+        case .failure: Issue.record("empty [apps] should be valid")
         }
     }
 
