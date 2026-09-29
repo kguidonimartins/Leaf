@@ -48,6 +48,7 @@ final class ConfigManagerImpl: NSObject {
     private let ioQueue = DispatchQueue(label: "com.leaf.config.io")
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.leaf.app", category: "config")
     private var saveWorkItem: DispatchWorkItem?
+    private var contentRevision: UInt64 = 0
     private var directoryWatcher: DispatchSourceFileSystemObject?
     private var directoryFileDescriptor: Int32 = -1
     private var fileWatcher: DispatchSourceFileSystemObject?
@@ -142,16 +143,20 @@ final class ConfigManagerImpl: NSObject {
         let config = Self.configFromUserDefaults(appModes: tracker?.appModes ?? [:], defaults: defaults)
         let content = Self.serialize(config)
 
-        saveWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.write(content: content)
-        }
-        saveWorkItem = work
-
-        if immediate {
-            ioQueue.async(execute: work)
-        } else {
-            ioQueue.asyncAfter(deadline: .now() + 0.3, execute: work)
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            self.saveWorkItem?.cancel()
+            let revision = self.contentRevision
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, revision == self.contentRevision else { return }
+                self.write(content: content, checkForExternalEdit: true)
+            }
+            self.saveWorkItem = work
+            if immediate {
+                self.ioQueue.async(execute: work)
+            } else {
+                self.ioQueue.asyncAfter(deadline: .now() + 0.3, execute: work)
+            }
         }
     }
 
@@ -163,11 +168,18 @@ final class ConfigManagerImpl: NSObject {
         write(content: Self.serialize(config))
     }
 
+    /// Drives the debounce deterministically in the isolated I/O tests.
+    func scheduleSaveForTesting() { scheduleSave() }
+
+    func flushPendingSaveForTesting() {
+        ioQueue.sync { saveWorkItem?.perform() }
+    }
+
     /// The actual file I/O: temp write, backup, atomic replace. Touches only
     /// its `content` parameter and `lastAppliedContent` — never `tracker` or
     /// `defaults` — so it's safe to run on `ioQueue` concurrently with
     /// main-thread mutations of those.
-    private func write(content: String) {
+    private func write(content: String, checkForExternalEdit: Bool = false) {
         guard content != lastAppliedContent else { return }
 
         ensureConfigDirectoryExists()
@@ -176,6 +188,13 @@ final class ConfigManagerImpl: NSObject {
         // backup live next to that resolved target, not next to the link.
         let targetURL = resolvedConfigURL()
         let tempURL = targetURL.deletingLastPathComponent().appendingPathComponent(".config.toml.tmp")
+
+        if checkForExternalEdit,
+           let diskContent = try? String(contentsOf: targetURL, encoding: .utf8),
+           diskContent != lastAppliedContent {
+            reloadFromDiskIfChanged()
+            return
+        }
 
         do {
             try content.write(to: tempURL, atomically: true, encoding: .utf8)
@@ -200,6 +219,13 @@ final class ConfigManagerImpl: NSObject {
         do {
             let content = try String(contentsOf: url, encoding: .utf8)
             guard content != lastAppliedContent else { return }
+            guard case .success = Self.parseValidated(content) else {
+                logger.error("config.toml is invalid, keeping current settings")
+                return
+            }
+            contentRevision &+= 1
+            saveWorkItem?.cancel()
+            saveWorkItem = nil
             DispatchQueue.main.async { [weak self] in
                 self?.applyValidatedContentOrKeepCurrent(content)
             }
@@ -233,6 +259,9 @@ final class ConfigManagerImpl: NSObject {
         // ordering as before — just race-free.
         let appliedContent = sourceContent ?? Self.serialize(config)
         ioQueue.async { [weak self] in
+            self?.contentRevision &+= 1
+            self?.saveWorkItem?.cancel()
+            self?.saveWorkItem = nil
             self?.lastAppliedContent = appliedContent
         }
     }

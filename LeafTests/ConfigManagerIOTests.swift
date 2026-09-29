@@ -146,6 +146,40 @@ struct ConfigManagerIOTests {
         #expect(tracker.appModes.isEmpty)
     }
 
+    @Test func acceptedExternalEditInvalidatesPendingDefaultsSave() throws {
+        let initial = "version = 1\n[general]\nnotify_after_minutes = 30\n[apps]\n"
+        let external = "version = 1\n[general]\nnotify_after_minutes = 120\n[apps]\n"
+        let fixture = try makeSymlinkedFixture(initialTargetContent: initial)
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+        fixture.manager.loadFromDiskOrMigrate()
+
+        fixture.defaults.set(60, forKey: "closingTime")
+        fixture.manager.scheduleSaveForTesting()
+        try external.write(to: fixture.targetURL, atomically: true, encoding: .utf8)
+        fixture.manager.loadFromDiskOrMigrate()
+        fixture.manager.flushPendingSaveForTesting()
+
+        #expect(fixture.defaults.integer(forKey: "closingTime") == 120)
+        #expect(try String(contentsOf: fixture.targetURL, encoding: .utf8) == external)
+    }
+
+    @Test func laterDefaultsEditCanSaveAfterExternalReload() throws {
+        let initial = "version = 1\n[general]\nnotify_after_minutes = 30\n[apps]\n"
+        let external = "version = 1\n[general]\nnotify_after_minutes = 120\n[apps]\n"
+        let fixture = try makeSymlinkedFixture(initialTargetContent: initial)
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+        fixture.manager.loadFromDiskOrMigrate()
+        try external.write(to: fixture.targetURL, atomically: true, encoding: .utf8)
+        fixture.manager.loadFromDiskOrMigrate()
+
+        fixture.defaults.set(60, forKey: "closingTime")
+        fixture.manager.scheduleSaveForTesting()
+        fixture.manager.flushPendingSaveForTesting()
+
+        #expect(fixture.defaults.integer(forKey: "closingTime") == 60)
+        #expect(try String(contentsOf: fixture.targetURL, encoding: .utf8).contains("notify_after_minutes = 60"))
+    }
+
     @Test func resolvedConfigURLFollowsRelativeSymlinkToItsTarget() throws {
         let fixture = try makeSymlinkedFixture(initialTargetContent: "")
         defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }

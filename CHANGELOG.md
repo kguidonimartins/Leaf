@@ -98,6 +98,9 @@ live-reload so hand-edited config is picked up automatically.
   in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
+- **External config edits now cancel older pending saves.** Before a delayed
+  GUI save replaces the file, Leaf checks whether another edit reached disk;
+  accepted reloads invalidate older snapshots so defaults and TOML stay in sync.
 - **Activity collection failures no longer trigger automatic actions.** When
   background activity detection is on, incomplete process or audio samples
   defer quit, hide, and notification actions until a reliable sample arrives.
