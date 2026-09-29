@@ -201,6 +201,36 @@ struct TrackerLogicTests {
         ))
     }
 
+    @Test func failedActivityCollectionDefersAutomaticActions() {
+        for (processAvailable, audioAvailable, unresolved) in [
+            (false, true, false),  // ps failed, even if audio found a PID
+            (true, false, false),  // HAL failed
+            (true, true, true),    // a relevant PID could not be resolved
+        ] {
+            #expect(!Tracker.canTakeAutomaticAction(
+                detectBackgroundActivity: true,
+                processSampleAvailable: processAvailable,
+                audioSampleAvailable: audioAvailable,
+                unresolvedRelevantProcess: unresolved
+            ))
+        }
+    }
+
+    @Test func validInactivityAndDisabledDetectionKeepTheirPolicies() {
+        #expect(Tracker.canTakeAutomaticAction(
+            detectBackgroundActivity: true,
+            processSampleAvailable: true,
+            audioSampleAvailable: true,
+            unresolvedRelevantProcess: false
+        ))
+        #expect(Tracker.canTakeAutomaticAction(
+            detectBackgroundActivity: false,
+            processSampleAvailable: false,
+            audioSampleAvailable: false,
+            unresolvedRelevantProcess: true
+        ))
+    }
+
     // MARK: - Background activity attribution
 
     @Test func resolveOwnerMatchesHelperInsideAppBundle() {

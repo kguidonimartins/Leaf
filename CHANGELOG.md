@@ -98,6 +98,10 @@ live-reload so hand-edited config is picked up automatically.
   in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
+- **Activity collection failures no longer trigger automatic actions.** When
+  background activity detection is on, incomplete process or audio samples
+  defer quit, hide, and notification actions until a reliable sample arrives.
+  A positive main-process audio signal still resets its idle timer.
 - **Invalid config.toml edits no longer erase app modes.** The whole file is
   checked before applying it; malformed values, duplicate keys, and unknown
   section headers are rejected while the last valid settings stay active. An

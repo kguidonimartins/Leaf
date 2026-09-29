@@ -5,7 +5,8 @@ import Foundation
 /// so the tracking logic can be tested with an injected fake.
 protocol AudioActivityProviding {
     /// PIDs of processes with an active audio *output* stream right now.
-    func activeOutputPIDs() -> Set<Int32>
+    /// nil means the HAL query was incomplete; an empty set is a valid result.
+    func activeOutputPIDs() -> Set<Int32>?
 }
 
 /// Reports which processes are currently producing audio output by querying the
@@ -14,19 +15,20 @@ protocol AudioActivityProviding {
 /// app alive even when it sits in the background.
 ///
 /// Requires macOS 14.2+ for the process-object properties; the app already
-/// targets 14.6, so no availability branching is needed. Any HAL failure is
-/// swallowed and reported as "no active audio", letting the caller fall back to
-/// other activity signals.
+/// targets 14.6, so no availability branching is needed. A HAL failure is
+/// reported separately from a valid sample with no active output.
 final class AudioActivityMonitor: AudioActivityProviding {
 
     private let selfPID = ProcessInfo.processInfo.processIdentifier
 
-    func activeOutputPIDs() -> Set<Int32> {
-        guard let processObjects = processObjectList() else { return [] }
+    func activeOutputPIDs() -> Set<Int32>? {
+        guard let processObjects = processObjectList() else { return nil }
 
         var pids = Set<Int32>()
         for object in processObjects {
-            guard isRunningOutput(object), let pid = pid(for: object) else { continue }
+            guard let running = isRunningOutput(object) else { return nil }
+            guard running else { continue }
+            guard let pid = pid(for: object) else { return nil }
             if pid == selfPID { continue }
             pids.insert(pid)
         }
@@ -46,7 +48,8 @@ final class AudioActivityMonitor: AudioActivityProviding {
         let sizeStatus = AudioObjectGetPropertyDataSize(
             AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize
         )
-        guard sizeStatus == noErr, dataSize > 0 else { return nil }
+        guard sizeStatus == noErr else { return nil }
+        if dataSize == 0 { return [] }
 
         let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
         var objects = [AudioObjectID](repeating: 0, count: count)
@@ -57,7 +60,7 @@ final class AudioActivityMonitor: AudioActivityProviding {
         return objects
     }
 
-    private func isRunningOutput(_ object: AudioObjectID) -> Bool {
+    private func isRunningOutput(_ object: AudioObjectID) -> Bool? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioProcessPropertyIsRunningOutput,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -67,7 +70,8 @@ final class AudioActivityMonitor: AudioActivityProviding {
         var value: UInt32 = 0
         var size = UInt32(MemoryLayout<UInt32>.size)
         let status = AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value)
-        return status == noErr && value != 0
+        guard status == noErr else { return nil }
+        return value != 0
     }
 
     private func pid(for object: AudioObjectID) -> Int32? {

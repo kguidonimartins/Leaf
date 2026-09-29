@@ -16,6 +16,48 @@ enum AppMode: String, Codable {
     case hide
 }
 
+protocol ProcessSampling {
+    func sample(audioPIDs: Set<Int32>, resolvePaths: Bool) -> Tracker.ProcessSampleBatch?
+}
+
+struct SystemProcessSampler: ProcessSampling {
+    func sample(audioPIDs: Set<Int32>, resolvePaths: Bool) -> Tracker.ProcessSampleBatch? {
+        let task = Process()
+        let pipe = Pipe()
+        task.executableURL = URL(filePath: "/bin/ps")
+        task.arguments = ["-e", "-o", "pid=,rss=,%cpu="]
+        task.standardOutput = pipe
+
+        do {
+            try task.run()
+            let data = try pipe.fileHandleForReading.readToEnd() ?? Data()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0,
+                  let output = String(data: data, encoding: .utf8) else { return nil }
+
+            var samples: [Tracker.ProcessSample] = []
+            var unresolvedPIDs = Set<Int32>()
+            for line in output.components(separatedBy: .newlines) where !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                let parts = line.split(separator: " ", omittingEmptySubsequences: true)
+                guard parts.count == 3,
+                      let pid = Int32(parts[0]),
+                      let rssKB = Double(parts[1]),
+                      let cpu = Double(parts[2]) else { return nil }
+                let path = resolvePaths ? Tracker.executablePath(forPID: pid) : ""
+                if resolvePaths && path.isEmpty { unresolvedPIDs.insert(pid) }
+                samples.append(Tracker.ProcessSample(
+                    pid: pid, executablePath: path, memoryMB: rssKB / 1024.0,
+                    cpuPercent: cpu, hasAudioOutput: audioPIDs.contains(pid)
+                ))
+            }
+            return samples.isEmpty ? nil : Tracker.ProcessSampleBatch(samples: samples, unresolvedPIDs: unresolvedPIDs)
+        } catch {
+            print("Leaf: Failed to fetch process samples - \(error)")
+            return nil
+        }
+    }
+}
+
 @Observable class Tracker: NSObject, UNUserNotificationCenterDelegate {
     
     var runningApps: [NSRunningApplication : TimeInterval] = [:]
@@ -63,9 +105,12 @@ enum AppMode: String, Codable {
     @ObservationIgnored private var notifiedApps = Set<String>()
     @ObservationIgnored private var isRunning = false
     @ObservationIgnored private let audioMonitor: AudioActivityProviding
+    @ObservationIgnored private let processSampler: ProcessSampling
 
-    init(audioMonitor: AudioActivityProviding = AudioActivityMonitor()) {
+    init(audioMonitor: AudioActivityProviding = AudioActivityMonitor(),
+         processSampler: ProcessSampling = SystemProcessSampler()) {
         self.audioMonitor = audioMonitor
+        self.processSampler = processSampler
         super.init()
         // Skipped under XCTest: reassigning `appModes` here re-serializes it
         // through `didSet`, which would write back to the real, shared
@@ -161,6 +206,19 @@ enum AppMode: String, Codable {
         let memoryMB: Double
         let cpuPercent: Double
         let hasAudioOutput: Bool
+    }
+
+    struct ProcessSampleBatch {
+        let samples: [ProcessSample]
+        let unresolvedPIDs: Set<Int32>
+    }
+
+    /// Unknown telemetry must never be treated as measured inactivity.
+    static func canTakeAutomaticAction(detectBackgroundActivity: Bool,
+                                       processSampleAvailable: Bool,
+                                       audioSampleAvailable: Bool,
+                                       unresolvedRelevantProcess: Bool) -> Bool {
+        !detectBackgroundActivity || (processSampleAvailable && audioSampleAvailable && !unresolvedRelevantProcess)
     }
     
     /// Per-app aggregated activity signals.
@@ -412,57 +470,6 @@ enum AppMode: String, Codable {
         setMode(app: app, mode: Tracker.toggledMode(current: current, toggling: .hide))
     }
     
-    /// Samples every process' memory and recent CPU via `ps`, resolves each
-    /// process' executable path, and flags those currently playing audio. The
-    /// per-process granularity is what lets us attribute a browser/Electron
-    /// app's background activity (which happens in helper processes) back to the
-    /// owning app.
-    private func getProcessSamples(audioPIDs: Set<Int32>, resolvePaths: Bool) -> [ProcessSample]? {
-        let task = Process()
-        let pipe = Pipe()
-        
-        task.executableURL = URL(filePath: "/bin/ps")
-        task.arguments = ["-e", "-o", "pid=,rss=,%cpu="]
-        task.standardOutput = pipe
-        
-        do {
-            try task.run()
-            let data = try pipe.fileHandleForReading.readToEnd() ?? Data()
-            task.waitUntilExit()
-            
-            guard task.terminationStatus == 0 else {
-                return nil
-            }
-            
-            guard let output = String(data: data, encoding: .utf8) else {
-                return nil
-            }
-            
-            var samples: [ProcessSample] = []
-            
-            for line in output.components(separatedBy: .newlines) {
-                let parts = line.split(separator: " ", omittingEmptySubsequences: true)
-                if parts.count == 3,
-                   let pid = Int32(parts[0]),
-                   let rssKB = Double(parts[1]),
-                   let cpu = Double(parts[2]) {
-                    samples.append(ProcessSample(
-                        pid: pid,
-                        executablePath: resolvePaths ? Tracker.executablePath(forPID: pid) : "",
-                        memoryMB: rssKB / 1024.0,
-                        cpuPercent: cpu,
-                        hasAudioOutput: audioPIDs.contains(pid)
-                    ))
-                }
-            }
-            
-            return samples.isEmpty ? nil : samples
-        } catch {
-            print("Leaf: Failed to fetch process samples - \(error)")
-            return nil
-        }
-    }
-    
     /// Full executable path for a PID, or an empty string if it can't be read
     /// (e.g. a system process we lack permission for).
     static func executablePath(forPID pid: Int32) -> String {
@@ -479,11 +486,12 @@ enum AppMode: String, Codable {
         // and the smart-alerts memory filter. Background detection adds the
         // audio query and per-process path resolution; skip that work when off.
         let detectBackground = detectBackgroundActivity
-        let activeAudioPIDs = detectBackground ? audioMonitor.activeOutputPIDs() : []
-        let samples = (detectBackground || smartAlerts)
-            ? getProcessSamples(audioPIDs: activeAudioPIDs, resolvePaths: detectBackground)
+        let activeAudioPIDs: Set<Int32>? = detectBackground ? audioMonitor.activeOutputPIDs() : []
+        let batch = (detectBackground || smartAlerts)
+            ? processSampler.sample(audioPIDs: activeAudioPIDs ?? [], resolvePaths: detectBackground)
             : nil
-        let memoryLookupFailed = smartAlerts && samples == nil
+        let samples = batch?.samples ?? []
+        let memoryLookupFailed = smartAlerts && batch == nil
         
         // Map each tracked app to its bundle path so helper processes living
         // inside that bundle (browser/Electron helpers) can be attributed back
@@ -499,20 +507,22 @@ enum AppMode: String, Codable {
                 if bundleID == Tracker.systemWebKitOwnerBundleID { safariRunning = true }
             }
             let webKitOwner = safariRunning ? Tracker.systemWebKitOwnerBundleID : nil
-            signals = Tracker.aggregateSignals(samples: samples ?? [],
+            signals = Tracker.aggregateSignals(samples: samples,
                                                appBundlePaths: appBundlePaths,
                                                webKitOwner: webKitOwner)
         }
         
         var memoryByPID: [Int32: Double] = [:]
-        for sample in samples ?? [] { memoryByPID[sample.pid] = sample.memoryMB }
+        for sample in samples { memoryByPID[sample.pid] = sample.memoryMB }
+        let sampledPIDs = Set(samples.map(\.pid))
         
         // Reset the idle timer for anything that looks active: the foreground
         // app, an app (incl. its helpers) playing audio, or one busy on the CPU.
         for (app, _) in runningApps {
             let appSignals = signals[app.bundleIdentifier ?? ""]
             if Tracker.isConsideredActive(isForeground: app.isActive,
-                                          hasActiveAudioOutput: appSignals?.hasAudioOutput ?? false,
+                                          hasActiveAudioOutput: (appSignals?.hasAudioOutput ?? false) ||
+                                              (activeAudioPIDs?.contains(app.processIdentifier) ?? false),
                                           cpuUsage: appSignals?.cpuPercent ?? 0.0,
                                           cpuThreshold: cpuActivityThreshold) {
                 self.runningApps[app] = now
@@ -531,6 +541,16 @@ enum AppMode: String, Codable {
                 
                 let bundleID = app.bundleIdentifier ?? ""
                 let mode = appModes[bundleID] ?? .notify
+                let unresolved = batch?.unresolvedPIDs ?? []
+                let unresolvedRelevantProcess = !sampledPIDs.contains(app.processIdentifier) ||
+                    unresolved.contains(app.processIdentifier) ||
+                    !(activeAudioPIDs ?? []).isSubset(of: sampledPIDs.subtracting(unresolved))
+                guard Tracker.canTakeAutomaticAction(
+                    detectBackgroundActivity: detectBackground,
+                    processSampleAvailable: batch != nil,
+                    audioSampleAvailable: activeAudioPIDs != nil,
+                    unresolvedRelevantProcess: unresolvedRelevantProcess
+                ) else { continue }
                 
                 switch Tracker.decideAction(mode: mode,
                                             idleTime: idleTime,
