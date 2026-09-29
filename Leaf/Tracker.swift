@@ -220,11 +220,25 @@ struct SystemProcessSampler: ProcessSampling {
                                        unresolvedRelevantProcess: Bool) -> Bool {
         !detectBackgroundActivity || (processSampleAvailable && audioSampleAvailable && !unresolvedRelevantProcess)
     }
+
+    static func needsProcessPaths(detectBackgroundActivity: Bool, smartAlerts: Bool) -> Bool {
+        detectBackgroundActivity || smartAlerts
+    }
+
+    static func notificationPrecedes(memoryMB: Double, idleTime: TimeInterval,
+                                     otherMemoryMB: Double, otherIdleTime: TimeInterval,
+                                     smartAlerts: Bool, memoryAvailable: Bool) -> Bool {
+        if smartAlerts && memoryAvailable && memoryMB != otherMemoryMB {
+            return memoryMB > otherMemoryMB
+        }
+        return idleTime > otherIdleTime
+    }
     
     /// Per-app aggregated activity signals.
     struct ActivitySignals {
         var hasAudioOutput: Bool = false
         var cpuPercent: Double = 0
+        var memoryMB: Double = 0
     }
     
     /// Whether an executable path belongs to the shared system WebKit engine
@@ -280,6 +294,7 @@ struct SystemProcessSampler: ProcessSampling {
                                            webKitOwner: webKitOwner) else { continue }
             var signals = result[owner] ?? ActivitySignals()
             signals.cpuPercent += sample.cpuPercent
+            signals.memoryMB += sample.memoryMB
             signals.hasAudioOutput = signals.hasAudioOutput || sample.hasAudioOutput
             result[owner] = signals
         }
@@ -484,11 +499,14 @@ struct SystemProcessSampler: ProcessSampling {
         
         // Sampled once per cycle and reused for activity detection (audio/CPU)
         // and the smart-alerts memory filter. Background detection adds the
-        // audio query and per-process path resolution; skip that work when off.
+        // audio query only when enabled. Smart Alerts still needs paths to
+        // attribute helper-process memory when background detection is off.
         let detectBackground = detectBackgroundActivity
         let activeAudioPIDs: Set<Int32>? = detectBackground ? audioMonitor.activeOutputPIDs() : []
         let batch = (detectBackground || smartAlerts)
-            ? processSampler.sample(audioPIDs: activeAudioPIDs ?? [], resolvePaths: detectBackground)
+            ? processSampler.sample(audioPIDs: activeAudioPIDs ?? [],
+                                    resolvePaths: Tracker.needsProcessPaths(detectBackgroundActivity: detectBackground,
+                                                                           smartAlerts: smartAlerts))
             : nil
         let samples = batch?.samples ?? []
         let memoryLookupFailed = smartAlerts && batch == nil
@@ -498,7 +516,7 @@ struct SystemProcessSampler: ProcessSampling {
         // to it. Safari's engine runs in shared system processes, so it gets
         // the dedicated WebKit fallback when it is running.
         var signals: [String: ActivitySignals] = [:]
-        if detectBackground {
+        if detectBackground || smartAlerts {
             var appBundlePaths: [String: String] = [:]
             var safariRunning = false
             for app in runningApps.keys {
@@ -521,9 +539,9 @@ struct SystemProcessSampler: ProcessSampling {
         for (app, _) in runningApps {
             let appSignals = signals[app.bundleIdentifier ?? ""]
             if Tracker.isConsideredActive(isForeground: app.isActive,
-                                          hasActiveAudioOutput: (appSignals?.hasAudioOutput ?? false) ||
+                                          hasActiveAudioOutput: (detectBackground && (appSignals?.hasAudioOutput ?? false)) ||
                                               (activeAudioPIDs?.contains(app.processIdentifier) ?? false),
-                                          cpuUsage: appSignals?.cpuPercent ?? 0.0,
+                                          cpuUsage: detectBackground ? (appSignals?.cpuPercent ?? 0.0) : 0.0,
                                           cpuThreshold: cpuActivityThreshold) {
                 self.runningApps[app] = now
             }
@@ -536,7 +554,8 @@ struct SystemProcessSampler: ProcessSampling {
                 let idleTime = now - lastTime
                 print("\(app.localizedName ?? "Unknown"): \(idleTime)")
                 
-                let appMemoryUsage = memoryByPID[app.processIdentifier] ?? 0.0
+                let appMemoryUsage = signals[app.bundleIdentifier ?? ""]?.memoryMB ??
+                    (memoryByPID[app.processIdentifier] ?? 0.0)
                 let isMemoryConsuming = !smartAlerts || memoryLookupFailed || (appMemoryUsage >= memoryThresholdMB)
                 
                 let bundleID = app.bundleIdentifier ?? ""
@@ -573,11 +592,9 @@ struct SystemProcessSampler: ProcessSampling {
         // Rate-limiting notifications
         if !notificationGuys.isEmpty {
             let sortedGuys = notificationGuys.sorted {
-                if smartAlerts && !memoryLookupFailed && $0.memoryUsage != $1.memoryUsage {
-                    return $0.memoryUsage > $1.memoryUsage
-                }
-                
-                return $0.idleTime > $1.idleTime
+                Tracker.notificationPrecedes(memoryMB: $0.memoryUsage, idleTime: $0.idleTime,
+                                             otherMemoryMB: $1.memoryUsage, otherIdleTime: $1.idleTime,
+                                             smartAlerts: smartAlerts, memoryAvailable: !memoryLookupFailed)
             }
             
             if let primaryGuy = sortedGuys.first {

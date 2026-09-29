@@ -18,10 +18,11 @@ for now, build it from source — see "Building from source" below.
 
 ## ⚡️ Features
 
-- **Per-app memory threshold** – Flags an inactive app as eligible for
-  notify/quit/hide once it (and its helper processes) crosses a fixed
-  200 MB RSS threshold, via the "Smart Alerts" toggle. This is a fixed
-  per-app limit, not a read of the system's overall memory pressure.
+- **Per-app memory threshold** – With Smart Alerts on, an inactive app in
+  `notify` mode is eligible for a warning once it and its helper processes
+  together use at least 200 MB RSS. `silentQuit` and `hide` act on idle time
+  regardless of memory use. This is a fixed per-app limit, not a read of the
+  system's overall memory pressure.
 - **Safe Quit** – Sends standard native termination requests (`Cmd + Q`) rather than force-killing processes, ensuring target apps still prompt you to save unsaved work.
 - **Zero Data Collection** – 100% local processing with absolutely no telemetry or tracking.
 - **Optimized Performance** – Background service designed to use minimal memory and CPU.
@@ -70,9 +71,9 @@ keep_active_apps_alive = true   # background activity detection
 "com.apple.Safari" = "protect"
 ```
 
-An empty file or one missing `version = 1` is treated as invalid and
-ignored (current settings are kept, nothing is overwritten) rather than
-silently wiping every app mode.
+Malformed files, unknown section headers, and files missing `version = 1`
+are ignored; current settings are kept. Use an empty `[apps]` section to
+intentionally clear every app mode.
 
 ## 🛠️ Tech Stack
 
@@ -92,4 +93,3 @@ upstream's feed and no feed of its own — see `CHANGELOG.md`.
 
 For issues or feature ideas specific to this fork, open an issue on this
 repository.
-

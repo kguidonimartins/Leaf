@@ -338,6 +338,29 @@ struct TrackerLogicTests {
         #expect(signals.count == 1)
         #expect(signals["com.google.Chrome"]?.cpuPercent == 9)
         #expect(signals["com.google.Chrome"]?.hasAudioOutput == true)
+        #expect(signals["com.google.Chrome"]?.memoryMB == 150)
+    }
+
+    @Test func smartAlertsCountsHelpersAndExcludesOtherApps() {
+        let samples = [
+            Tracker.ProcessSample(pid: 1, executablePath: "/Applications/A.app/Contents/MacOS/A",
+                                  memoryMB: 100, cpuPercent: 0, hasAudioOutput: false),
+            Tracker.ProcessSample(pid: 2, executablePath: "/Applications/A.app/Contents/Helpers/H",
+                                  memoryMB: 150, cpuPercent: 0, hasAudioOutput: false),
+            Tracker.ProcessSample(pid: 3, executablePath: "/Applications/B.app/Contents/MacOS/B",
+                                  memoryMB: 500, cpuPercent: 0, hasAudioOutput: false),
+        ]
+        let signals = Tracker.aggregateSignals(samples: samples,
+            appBundlePaths: ["a": "/Applications/A.app", "b": "/Applications/B.app"], webKitOwner: nil)
+        #expect(signals["a"]?.memoryMB == 250)
+        #expect(signals["b"]?.memoryMB == 500)
+        #expect((signals["a"]?.memoryMB ?? 0) >= 200)
+        #expect(Tracker.needsProcessPaths(detectBackgroundActivity: false, smartAlerts: true))
+        #expect(!Tracker.needsProcessPaths(detectBackgroundActivity: false, smartAlerts: false))
+        #expect(Tracker.notificationPrecedes(memoryMB: 250, idleTime: 960,
+            otherMemoryMB: 210, otherIdleTime: 1800, smartAlerts: true, memoryAvailable: true))
+        #expect(!Tracker.notificationPrecedes(memoryMB: 250, idleTime: 960,
+            otherMemoryMB: 210, otherIdleTime: 1800, smartAlerts: false, memoryAvailable: true))
     }
 
     @Test func aggregateAttributesWebKitAudioToSafari() {

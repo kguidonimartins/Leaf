@@ -98,6 +98,10 @@ live-reload so hand-edited config is picked up automatically.
   in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
+- **Smart Alerts now uses each app's total RSS, including helpers.** The
+  memory filter and notification ordering use the aggregate even when
+  background activity detection is off. The README now states that this
+  filter applies only to notify mode.
 - **Symlinked config files resume live reload after the target is recreated.**
   Leaf also watches the resolved target's directory and follows a redirected
   link, covering in-place edits, atomic replacement, and delayed recreation.
