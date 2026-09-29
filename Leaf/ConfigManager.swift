@@ -90,7 +90,18 @@ final class ConfigManagerImpl: NSObject {
     /// config.toml gets its target updated in place instead of being
     /// replaced by a plain file, which would silently sever the link.
     func resolvedConfigURL() -> URL {
-        configURL.resolvingSymlinksInPath()
+        var url = configURL
+        for _ in 0..<16 {
+            guard let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: url.path) else {
+                return url.resolvingSymlinksInPath()
+            }
+            if destination.hasPrefix("/") {
+                url = URL(fileURLWithPath: destination).standardizedFileURL
+            } else {
+                url = url.deletingLastPathComponent().appendingPathComponent(destination).standardizedFileURL
+            }
+        }
+        return url
     }
 
     // `internal` (not `private`) below so `@testable import Leaf` can drive
@@ -180,21 +191,19 @@ final class ConfigManagerImpl: NSObject {
     /// `defaults` — so it's safe to run on `ioQueue` concurrently with
     /// main-thread mutations of those.
     private func write(content: String, checkForExternalEdit: Bool = false) {
-        guard content != lastAppliedContent else { return }
-
         ensureConfigDirectoryExists()
         // Resolved *before* writing so a symlinked config.toml (e.g. into a
         // dotfiles repo) gets its target updated in place; the temp file and
         // backup live next to that resolved target, not next to the link.
         let targetURL = resolvedConfigURL()
         let tempURL = targetURL.deletingLastPathComponent().appendingPathComponent(".config.toml.tmp")
+        let diskContent = try? String(contentsOf: targetURL, encoding: .utf8)
 
-        if checkForExternalEdit,
-           let diskContent = try? String(contentsOf: targetURL, encoding: .utf8),
-           diskContent != lastAppliedContent {
+        if checkForExternalEdit, let diskContent, diskContent != lastAppliedContent {
             reloadFromDiskIfChanged()
             return
         }
+        guard diskContent != content else { return }
 
         do {
             try content.write(to: tempURL, atomically: true, encoding: .utf8)

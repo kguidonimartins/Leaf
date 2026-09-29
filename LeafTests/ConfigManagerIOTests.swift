@@ -180,6 +180,53 @@ struct ConfigManagerIOTests {
         #expect(try String(contentsOf: fixture.targetURL, encoding: .utf8).contains("notify_after_minutes = 60"))
     }
 
+    @Test func firstLaunchCreatesConfigAndReopensWithMigratedValues() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("leaf-migrate-\(UUID().uuidString)")
+        let configURL = base.appendingPathComponent("config/config.toml")
+        let suiteName = "com.leaf.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(60, forKey: "closingTime")
+        defaults.set(false, forKey: "smartAlerts")
+        let tracker = Tracker()
+        tracker.appModes = ["com.example.Keep": .protect]
+        let manager = ConfigManagerImpl(configURL: configURL, defaults: defaults)
+        manager.configure(tracker: tracker)
+
+        manager.loadFromDiskOrMigrate()
+        manager.flushPendingSaveForTesting()
+
+        let content = try String(contentsOf: configURL, encoding: .utf8)
+        #expect(ConfigManagerImpl.validate(content) == nil)
+        #expect(content.contains("notify_after_minutes = 60"))
+        #expect(content.contains("\"com.example.Keep\" = \"protect\""))
+
+        defaults.set(15, forKey: "closingTime")
+        let reopenedTracker = Tracker()
+        let reopened = ConfigManagerImpl(configURL: configURL, defaults: defaults)
+        reopened.configure(tracker: reopenedTracker)
+        reopened.loadFromDiskOrMigrate()
+        #expect(defaults.integer(forKey: "closingTime") == 60)
+        #expect(reopenedTracker.appModes["com.example.Keep"] == .protect)
+    }
+
+    @Test func migrationCreatesMissingSymlinkTarget() throws {
+        let fixture = try makeSymlinkedFixture(initialTargetContent: "")
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+        try FileManager.default.removeItem(at: fixture.targetURL)
+        let tracker = Tracker()
+        tracker.appModes = ["com.example.Keep": .protect]
+        fixture.manager.configure(tracker: tracker)
+
+        fixture.manager.loadFromDiskOrMigrate()
+        fixture.manager.flushPendingSaveForTesting()
+
+        let content = try String(contentsOf: fixture.targetURL, encoding: .utf8)
+        #expect(ConfigManagerImpl.validate(content) == nil)
+        #expect(content.contains("\"com.example.Keep\" = \"protect\""))
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: fixture.symlinkURL.path) == "../target/real.toml")
+    }
+
     @Test func resolvedConfigURLFollowsRelativeSymlinkToItsTarget() throws {
         let fixture = try makeSymlinkedFixture(initialTargetContent: "")
         defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }

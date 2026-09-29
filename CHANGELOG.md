@@ -98,6 +98,9 @@ live-reload so hand-edited config is picked up automatically.
   in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
+- **First-launch migration now creates config.toml immediately.** A missing
+  file or symlink target is written even when its content already matches the
+  settings just applied in memory.
 - **External config edits now cancel older pending saves.** Before a delayed
   GUI save replaces the file, Leaf checks whether another edit reached disk;
   accepted reloads invalidate older snapshots so defaults and TOML stay in sync.
