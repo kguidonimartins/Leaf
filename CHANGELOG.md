@@ -98,6 +98,9 @@ live-reload so hand-edited config is picked up automatically.
   in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
+- **Symlinked config files resume live reload after the target is recreated.**
+  Leaf also watches the resolved target's directory and follows a redirected
+  link, covering in-place edits, atomic replacement, and delayed recreation.
 - **First-launch migration now creates config.toml immediately.** A missing
   file or symlink target is written even when its content already matches the
   settings just applied in memory.

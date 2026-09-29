@@ -9,6 +9,26 @@ import Testing
 /// touches the real `~/.config/leaf` or the shared `com.satwik.Leaf` domain.
 struct ConfigManagerIOTests {
 
+    private func awaitMode(_ mode: AppMode, manager: ConfigManagerImpl,
+                           change: @escaping () throws -> Void) async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                var finished = false
+                let finish: (Bool) -> Void = { result in
+                    guard !finished else { return }
+                    finished = true
+                    manager.onAppliedConfigForTesting = nil
+                    continuation.resume(returning: result)
+                }
+                manager.onAppliedConfigForTesting = { config in
+                    if config.appModes["com.example.Watched"] == mode { finish(true) }
+                }
+                do { try change() } catch { finish(false) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { finish(false) }
+            }
+        }
+    }
+
     /// Sets up `<tmp>/config/config.toml` as a relative symlink to
     /// `<tmp>/target/real.toml`, returning both URLs plus a disposable
     /// UserDefaults suite. Callers get a fresh temp directory removed by the
@@ -225,6 +245,44 @@ struct ConfigManagerIOTests {
         #expect(ConfigManagerImpl.validate(content) == nil)
         #expect(content.contains("\"com.example.Keep\" = \"protect\""))
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: fixture.symlinkURL.path) == "../target/real.toml")
+    }
+
+    @Test func watcherRecoversAfterTargetReplacementAndLinkRedirect() async throws {
+        func content(_ mode: String) -> String {
+            "version = 1\n[apps]\n\"com.example.Watched\" = \"\(mode)\"\n"
+        }
+        let fixture = try makeSymlinkedFixture(initialTargetContent: content("protect"))
+        defer {
+            fixture.manager.stopWatchingForTesting()
+            fixture.defaults.removePersistentDomain(forName: fixture.suiteName)
+        }
+        let tracker = Tracker()
+        fixture.manager.configure(tracker: tracker)
+        fixture.manager.loadFromDiskOrMigrate()
+        fixture.manager.startWatchingForTesting()
+
+        #expect(await awaitMode(.notify, manager: fixture.manager) {
+            try content("notify").write(to: fixture.targetURL, atomically: false, encoding: .utf8)
+        })
+        #expect(await awaitMode(.hide, manager: fixture.manager) {
+            try content("hide").write(to: fixture.targetURL, atomically: true, encoding: .utf8)
+        })
+
+        try FileManager.default.removeItem(at: fixture.targetURL)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(await awaitMode(.silentQuit, manager: fixture.manager) {
+            try content("silent_quit").write(to: fixture.targetURL, atomically: true, encoding: .utf8)
+        })
+
+        let newDir = fixture.targetURL.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("other")
+        try FileManager.default.createDirectory(at: newDir, withIntermediateDirectories: true)
+        let newTarget = newDir.appendingPathComponent("new.toml")
+        try content("protect").write(to: newTarget, atomically: true, encoding: .utf8)
+        #expect(await awaitMode(.protect, manager: fixture.manager) {
+            try FileManager.default.removeItem(at: fixture.symlinkURL)
+            try FileManager.default.createSymbolicLink(atPath: fixture.symlinkURL.path, withDestinationPath: "../other/new.toml")
+        })
+        #expect(tracker.appModes["com.example.Watched"] == .protect)
     }
 
     @Test func resolvedConfigURLFollowsRelativeSymlinkToItsTarget() throws {

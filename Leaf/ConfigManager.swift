@@ -51,10 +51,14 @@ final class ConfigManagerImpl: NSObject {
     private var contentRevision: UInt64 = 0
     private var directoryWatcher: DispatchSourceFileSystemObject?
     private var directoryFileDescriptor: Int32 = -1
+    private var targetDirectoryWatcher: DispatchSourceFileSystemObject?
+    private var targetDirectoryFileDescriptor: Int32 = -1
+    private var watchedTargetDirectory: URL?
     private var fileWatcher: DispatchSourceFileSystemObject?
     private var fileDescriptor: Int32 = -1
 
     private var suppressSave = false
+    var onAppliedConfigForTesting: ((LeafConfig) -> Void)?
     // Only ever mutated on `ioQueue` in production (see `scheduleSave` and
     // `apply`), which is what makes the `write(content:)` comparison against
     // it race-free without a lock. Tests that call `saveToDisk()` directly
@@ -75,7 +79,15 @@ final class ConfigManagerImpl: NSObject {
         loadFromDiskOrMigrate()
         startObservingUserDefaults()
         startDirectoryWatcher()
+        rearmTargetDirectoryWatcher()
         startFileWatcher()
+    }
+
+    deinit {
+        directoryWatcher?.cancel()
+        targetDirectoryWatcher?.cancel()
+        fileWatcher?.cancel()
+        NotificationCenter.default.removeObserver(self)
     }
 
     func notifyAppModesChanged() {
@@ -273,6 +285,7 @@ final class ConfigManagerImpl: NSObject {
             self?.saveWorkItem = nil
             self?.lastAppliedContent = appliedContent
         }
+        onAppliedConfigForTesting?(config)
     }
 
     private func ensureConfigDirectoryExists() {
@@ -317,6 +330,7 @@ final class ConfigManagerImpl: NSObject {
             queue: ioQueue
         )
         source.setEventHandler { [weak self] in
+            self?.rearmTargetDirectoryWatcher()
             self?.reloadFromDiskIfChanged()
             // The symlink itself (or config.toml) may have just been
             // created, removed, or repointed — make sure the file watcher
@@ -334,6 +348,37 @@ final class ConfigManagerImpl: NSObject {
             }
         }
         directoryWatcher = source
+        source.resume()
+    }
+
+    /// A dangling target has no file inode to watch. Its containing directory
+    /// still reports recreation, even when it lives outside the link's folder.
+    private func rearmTargetDirectoryWatcher() {
+        let targetDirectory = resolvedConfigURL().deletingLastPathComponent().standardizedFileURL
+        guard targetDirectory != watchedTargetDirectory else { return }
+        targetDirectoryWatcher?.cancel()
+        targetDirectoryWatcher = nil
+        watchedTargetDirectory = targetDirectory
+
+        let fd = open(targetDirectory.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        targetDirectoryFileDescriptor = fd
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .rename, .delete, .extend, .attrib, .link],
+            queue: ioQueue
+        )
+        source.setEventHandler { [weak self] in
+            self?.reloadFromDiskIfChanged()
+            self?.rearmFileWatcher()
+        }
+        source.setCancelHandler { [weak self] in
+            close(fd)
+            if self?.targetDirectoryFileDescriptor == fd {
+                self?.targetDirectoryFileDescriptor = -1
+            }
+        }
+        targetDirectoryWatcher = source
         source.resume()
     }
 
@@ -378,9 +423,29 @@ final class ConfigManagerImpl: NSObject {
     }
 
     private func rearmFileWatcher() {
+        rearmTargetDirectoryWatcher()
         fileWatcher?.cancel()
         fileWatcher = nil
         startFileWatcher()
+    }
+
+    func startWatchingForTesting() {
+        startDirectoryWatcher()
+        ioQueue.sync {
+            rearmTargetDirectoryWatcher()
+            startFileWatcher()
+        }
+    }
+
+    func stopWatchingForTesting() {
+        ioQueue.sync {
+            directoryWatcher?.cancel()
+            directoryWatcher = nil
+            targetDirectoryWatcher?.cancel()
+            targetDirectoryWatcher = nil
+            fileWatcher?.cancel()
+            fileWatcher = nil
+        }
     }
 
     // MARK: - Side effects
