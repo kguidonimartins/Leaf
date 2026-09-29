@@ -9,6 +9,25 @@ import Testing
 /// touches the real `~/.config/leaf` or the shared `com.satwik.Leaf` domain.
 struct ConfigManagerIOTests {
 
+    private final class FakeLoginService: LoginItemServing {
+        enum TestError: Error { case rejected }
+        var status: LoginItemStatus
+        var registerCount = 0
+        var unregisterCount = 0
+        var rejectRegistration = false
+
+        init(status: LoginItemStatus) { self.status = status }
+        func register() throws {
+            registerCount += 1
+            if rejectRegistration { throw TestError.rejected }
+            status = .enabled
+        }
+        func unregister() throws {
+            unregisterCount += 1
+            status = .notRegistered
+        }
+    }
+
     private func awaitMode(_ mode: AppMode, manager: ConfigManagerImpl,
                            change: @escaping () throws -> Void) async -> Bool {
         await withCheckedContinuation { continuation in
@@ -283,6 +302,65 @@ struct ConfigManagerIOTests {
             try FileManager.default.createSymbolicLink(atPath: fixture.symlinkURL.path, withDestinationPath: "../other/new.toml")
         })
         #expect(tracker.appModes["com.example.Watched"] == .protect)
+    }
+
+    @Test func unrelatedReloadDoesNotRestoreExternallyDisabledLoginItem() throws {
+        let fixture = try makeSymlinkedFixture(initialTargetContent: "version = 1\n[general]\nlaunch_at_login = true\n[apps]\n")
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+        let login = FakeLoginService(status: .notRegistered)
+        let manager = ConfigManagerImpl(configURL: fixture.symlinkURL, defaults: fixture.defaults, loginService: login)
+        manager.loadFromDiskOrMigrate()
+        #expect(login.registerCount == 0)
+        #expect(fixture.defaults.bool(forKey: "launchAtLogin") == false)
+
+        try "version = 1\n[general]\nlaunch_at_login = true\nsmart_alerts = false\n[apps]\n"
+            .write(to: fixture.targetURL, atomically: true, encoding: .utf8)
+        manager.loadFromDiskOrMigrate()
+        #expect(login.registerCount == 0)
+        #expect(fixture.defaults.bool(forKey: "launchAtLogin") == false)
+
+        try "version = 1\n[general]\nlaunch_at_login = false\n[apps]\n"
+            .write(to: fixture.targetURL, atomically: true, encoding: .utf8)
+        manager.loadFromDiskOrMigrate()
+        try "version = 1\n[general]\nlaunch_at_login = true\n[apps]\n"
+            .write(to: fixture.targetURL, atomically: true, encoding: .utf8)
+        manager.loadFromDiskOrMigrate()
+        #expect(login.registerCount == 1)
+        #expect(fixture.defaults.bool(forKey: "launchAtLogin") == true)
+    }
+
+    @Test func failedLoginRegistrationKeepsActualStatusInDefaults() throws {
+        let fixture = try makeSymlinkedFixture(initialTargetContent: "version = 1\n[general]\nlaunch_at_login = false\n[apps]\n")
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+        let login = FakeLoginService(status: .notRegistered)
+        login.rejectRegistration = true
+        let manager = ConfigManagerImpl(configURL: fixture.symlinkURL, defaults: fixture.defaults, loginService: login)
+        manager.loadFromDiskOrMigrate()
+        try "version = 1\n[general]\nlaunch_at_login = true\n[apps]\n"
+            .write(to: fixture.targetURL, atomically: true, encoding: .utf8)
+        manager.loadFromDiskOrMigrate()
+        #expect(login.registerCount == 1)
+        #expect(fixture.defaults.bool(forKey: "launchAtLogin") == false)
+    }
+
+    @Test func settingsLoginToggleMakesExplicitServiceRequests() throws {
+        let fixture = try makeSymlinkedFixture(initialTargetContent: "version = 1\n[general]\nlaunch_at_login = false\n[apps]\n")
+        defer { fixture.defaults.removePersistentDomain(forName: fixture.suiteName) }
+        let login = FakeLoginService(status: .notRegistered)
+        let manager = ConfigManagerImpl(configURL: fixture.symlinkURL, defaults: fixture.defaults, loginService: login)
+        manager.loadFromDiskOrMigrate()
+
+        manager.setLaunchAtLoginFromUI(true)
+        #expect(login.registerCount == 1)
+        #expect(login.status == .enabled)
+        manager.setLaunchAtLoginFromUI(false)
+        #expect(login.unregisterCount == 1)
+        #expect(login.status == .notRegistered)
+
+        login.status = .requiresApproval
+        manager.setLaunchAtLoginFromUI(true)
+        #expect(login.registerCount == 1)
+        #expect(ConfigManagerImpl.loginToggleValue(for: login.status))
     }
 
     @Test func resolvedConfigURLFollowsRelativeSymlinkToItsTarget() throws {

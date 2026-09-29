@@ -55,6 +55,9 @@ You can also open `Leaf.xcodeproj` in Xcode and build/run with ⌘R.
 Settings and per-app modes are persisted to `~/.config/leaf/config.toml`
 (hand-editable; changes are picked up live) and mirrored to `UserDefaults`.
 It's created on first launch from your existing UserDefaults values.
+For `launch_at_login`, a change made in macOS Login Items takes precedence
+over an unchanged TOML value. Change that value explicitly, or use the
+Settings switch, to request a new login item state.
 
 ```toml
 version = 1

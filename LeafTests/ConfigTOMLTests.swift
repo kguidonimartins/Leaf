@@ -174,6 +174,26 @@ struct ConfigTOMLTests {
         }
     }
 
+    @Test func loginReconciliationRespectsSystemChangesAndExplicitEdits() {
+        let unchanged = ConfigManagerImpl.reconcileLoginItem(
+            requested: true, previousRequest: true, status: .notRegistered)
+        #expect(unchanged.action == .none)
+        #expect(unchanged.toggleValue == false)
+
+        let explicitEnable = ConfigManagerImpl.reconcileLoginItem(
+            requested: true, previousRequest: false, status: .notRegistered)
+        #expect(explicitEnable.action == .register)
+        let explicitDisable = ConfigManagerImpl.reconcileLoginItem(
+            requested: false, previousRequest: true, status: .enabled)
+        #expect(explicitDisable.action == .unregister)
+
+        #expect(ConfigManagerImpl.reconcileLoginItem(
+            requested: true, previousRequest: false, status: .requiresApproval).action == .none)
+        #expect(ConfigManagerImpl.loginToggleValue(for: .requiresApproval))
+        #expect(ConfigManagerImpl.reconcileLoginItem(
+            requested: true, previousRequest: false, status: .notFound).action == .none)
+    }
+
     // MARK: - parseAppMode / serializeAppMode
 
     @Test func parseAppModeMapsCorrectly() {

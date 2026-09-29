@@ -37,6 +37,34 @@ enum ConfigManager {
     }
 }
 
+enum LoginItemStatus: Equatable {
+    case enabled
+    case notRegistered
+    case requiresApproval
+    case notFound
+}
+
+protocol LoginItemServing {
+    var status: LoginItemStatus { get }
+    func register() throws
+    func unregister() throws
+}
+
+struct SystemLoginItemService: LoginItemServing {
+    var status: LoginItemStatus {
+        switch SMAppService.mainApp.status {
+        case .enabled: return .enabled
+        case .notRegistered: return .notRegistered
+        case .requiresApproval: return .requiresApproval
+        case .notFound: return .notFound
+        @unknown default: return .notFound
+        }
+    }
+
+    func register() throws { try SMAppService.mainApp.register() }
+    func unregister() throws { try SMAppService.mainApp.unregister() }
+}
+
 final class ConfigManagerImpl: NSObject {
     private weak var tracker: Tracker?
 
@@ -47,6 +75,8 @@ final class ConfigManagerImpl: NSObject {
     /// UserDefaults domain mirrored to/from config.toml. Injectable so tests
     /// never read or write the real, shared `com.satwik.Leaf` domain.
     private let defaults: UserDefaults
+    private let loginService: LoginItemServing?
+    private var lastAcceptedLoginPreference: Bool?
 
     private let ioQueue = DispatchQueue(label: "com.leaf.config.io")
     private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.leaf.app", category: "config")
@@ -68,9 +98,11 @@ final class ConfigManagerImpl: NSObject {
     // touch it synchronously on their own single thread, which is fine.
     private var lastAppliedContent: String?
 
-    init(configURL: URL = ConfigManager.configURL, defaults: UserDefaults = .standard) {
+    init(configURL: URL = ConfigManager.configURL, defaults: UserDefaults = .standard,
+         loginService: LoginItemServing? = nil) {
         self.configURL = configURL
         self.defaults = defaults
+        self.loginService = loginService ?? (ConfigManager.isRunningTests ? nil : SystemLoginItemService())
         super.init()
     }
 
@@ -262,18 +294,24 @@ final class ConfigManagerImpl: NSObject {
         suppressSave = true
         defer { suppressSave = false }
 
-        defaults.set(config.launchAtLogin, forKey: "launchAtLogin")
+        if let loginService {
+            let decision = Self.reconcileLoginItem(
+                requested: config.launchAtLogin,
+                previousRequest: lastAcceptedLoginPreference,
+                status: loginService.status
+            )
+            performLoginAction(decision.action, using: loginService)
+            defaults.set(Self.loginToggleValue(for: loginService.status), forKey: "launchAtLogin")
+        } else {
+            defaults.set(config.launchAtLogin, forKey: "launchAtLogin")
+        }
+        lastAcceptedLoginPreference = config.launchAtLogin
         defaults.set(config.quitWithoutNotify, forKey: "quitWithoutNotify")
         defaults.set(config.notifyAfterMinutes, forKey: "closingTime")
         defaults.set(config.smartAlerts, forKey: "smartAlerts")
         defaults.set(config.keepActiveAppsAlive, forKey: "detectBackgroundActivity")
 
         tracker?.appModes = config.appModes
-
-        // Never touch the real login item registration from a test process.
-        if !ConfigManager.isRunningTests {
-            Self.applyLaunchAtLogin(config.launchAtLogin)
-        }
 
         // Confined to `ioQueue` (see `lastAppliedContent`'s declaration)
         // rather than set here on the main thread directly. Enqueued before
@@ -455,25 +493,60 @@ final class ConfigManagerImpl: NSObject {
 
     private static let sideEffectLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.leaf.app", category: "login-item")
 
-    /// The single place that registers/unregisters Leaf as a login item.
-    /// Only calls into SMAppService when `enabled` actually disagrees with
-    /// the real, current registration — not on every config load/apply —
-    /// so this never reverts a login item the user removed by hand in
-    /// System Settings, and never calls `unregister()` on an app that was
-    /// never registered (which SMAppService logs as an error).
-    static func applyLaunchAtLogin(_ enabled: Bool) {
-        let alreadyEnabled = SMAppService.mainApp.status == .enabled
-        guard enabled != alreadyEnabled else { return }
+    enum LoginAction: Equatable {
+        case none
+        case register
+        case unregister
+    }
 
+    struct LoginReconciliation: Equatable {
+        let action: LoginAction
+        let toggleValue: Bool
+    }
+
+    static func loginToggleValue(for status: LoginItemStatus) -> Bool {
+        status == .enabled || status == .requiresApproval
+    }
+
+    /// An unchanged TOML value is only a read, so the macOS status wins.
+    /// Changing that value (or using the Settings toggle) is an explicit request.
+    static func reconcileLoginItem(requested: Bool, previousRequest: Bool?,
+                                   status: LoginItemStatus) -> LoginReconciliation {
+        guard let previousRequest, requested != previousRequest else {
+            return LoginReconciliation(action: .none, toggleValue: loginToggleValue(for: status))
+        }
+        let action: LoginAction
+        if requested {
+            action = status == .notRegistered ? .register : .none
+        } else {
+            action = status == .enabled || status == .requiresApproval ? .unregister : .none
+        }
+        return LoginReconciliation(action: action, toggleValue: requested)
+    }
+
+    private func performLoginAction(_ action: LoginAction, using service: LoginItemServing) {
         do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
+            switch action {
+            case .none: break
+            case .register: try service.register()
+            case .unregister: try service.unregister()
             }
         } catch {
-            sideEffectLogger.error("Failed to update login item — \(error.localizedDescription, privacy: .public)")
+            Self.sideEffectLogger.error("Failed to update login item — \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    func setLaunchAtLoginFromUI(_ enabled: Bool) {
+        lastAcceptedLoginPreference = enabled
+        guard let loginService else { return }
+        let action = Self.reconcileLoginItem(requested: enabled,
+                                             previousRequest: !enabled,
+                                             status: loginService.status).action
+        performLoginAction(action, using: loginService)
+    }
+
+    static func currentLoginStatus() -> LoginItemStatus {
+        SystemLoginItemService().status
     }
 
     static func configFromUserDefaults(appModes: [String: AppMode], defaults: UserDefaults = .standard) -> LeafConfig {

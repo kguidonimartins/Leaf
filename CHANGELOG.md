@@ -5,7 +5,7 @@ All notable changes to Leaf are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4] - Unreleased
+## [1.5] - Unreleased
 
 This release adds a TOML configuration file for persistent settings, with
 live-reload so hand-edited config is picked up automatically.
@@ -33,7 +33,8 @@ live-reload so hand-edited config is picked up automatically.
   Smart Alerts scope fix below, then to **1.4 (build 10)** for the login
   item fix below, then to **1.4 (build 11)** for the quit-safety fix below,
   then to **1.4 (build 12)** for the sleep/wake timer fix below, then to
-  **1.4 (build 13)** for the documentation/TOML-header pass below.
+  **1.4 (build 13)** for the documentation/TOML-header pass below, then to
+  **1.5 (build 21)** for the audit fixes below.
 - **README and AGENTS.md updated to match reality.** Requirements now say
   macOS 14.6 / Xcode 26 (was 14.0 / Xcode 15+); "Memory Pressure Monitoring"
   is now described accurately as a fixed 200 MB per-app RSS threshold, not
@@ -98,6 +99,11 @@ live-reload so hand-edited config is picked up automatically.
   in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
+- **Login Items changes made in macOS now take precedence on config reload.**
+  An unchanged `launch_at_login` value no longer re-registers Leaf after the
+  system disables it. Explicit TOML or Settings changes still update the login
+  item; pending approval and registration failure keep the toggle aligned with
+  the service status.
 - **Extreme idle times in config.toml no longer crash Leaf.** Integers outside
   the allowed range are clamped before nearest-value arithmetic.
 - **Smart Alerts now uses each app's total RSS, including helpers.** The

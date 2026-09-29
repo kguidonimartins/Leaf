@@ -1,5 +1,4 @@
 import SwiftUI
-import ServiceManagement
 
 struct SettingsView: View {
 
@@ -9,6 +8,7 @@ struct SettingsView: View {
     @AppStorage("quitWithoutNotify") private var quitWithoutNotify: Bool = false
     @AppStorage("smartAlerts") private var smartAlerts: Bool = true
     @AppStorage("detectBackgroundActivity") private var detectBackgroundActivity: Bool = true
+    @State private var loginStatus: LoginItemStatus = .notRegistered
 
     /// Shared width for the controls column so every switch and caption lines up.
     private let contentWidth: CGFloat = 360
@@ -35,13 +35,22 @@ struct SettingsView: View {
             
             VStack(alignment: .leading, spacing: 14) {
                 
-                Toggle(isOn: $launchAtLogin) {
+                Toggle(isOn: Binding(
+                    get: { launchAtLogin },
+                    set: { enabled in
+                        ConfigManager.shared.setLaunchAtLoginFromUI(enabled)
+                        loginStatus = ConfigManagerImpl.currentLoginStatus()
+                        launchAtLogin = ConfigManagerImpl.loginToggleValue(for: loginStatus)
+                    }
+                )) {
                     Text("Launch at login")
                         .padding(2)
                 }
                 .toggleStyle(.switch)
-                .onChange(of: launchAtLogin) {
-                    ConfigManagerImpl.applyLaunchAtLogin(launchAtLogin)
+                if loginStatus == .requiresApproval {
+                    Text("Approve Leaf in System Settings → Login Items to finish enabling this.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 
                 toggleSetting(
@@ -95,7 +104,8 @@ struct SettingsView: View {
             // UserDefaults can drift from the real registration (e.g. the
             // user removed Leaf from Login Items in System Settings), so
             // show the actual status rather than trusting the stored value.
-            launchAtLogin = SMAppService.mainApp.status == .enabled
+            loginStatus = ConfigManagerImpl.currentLoginStatus()
+            launchAtLogin = ConfigManagerImpl.loginToggleValue(for: loginStatus)
         }
         .onDisappear {
             NSApp.setActivationPolicy(.accessory)
@@ -190,4 +200,3 @@ struct StepperView: View {
         .foregroundStyle(colorScheme == .dark ? Color.primary : Color.black.opacity(0.75))
     }
 }
-
