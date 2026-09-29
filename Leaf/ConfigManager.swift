@@ -14,7 +14,10 @@ struct LeafConfig: Equatable {
     static let allowedNotifyMinutes = [5, 10, 15, 30, 60, 120, 240]
 
     static func clampNotifyMinutes(_ value: Int) -> Int {
-        allowedNotifyMinutes.min(by: { abs($0 - value) < abs($1 - value) }) ?? 15
+        guard let first = allowedNotifyMinutes.first, let last = allowedNotifyMinutes.last else { return 15 }
+        if value <= first { return first }
+        if value >= last { return last }
+        return allowedNotifyMinutes.min(by: { abs($0 - value) < abs($1 - value) }) ?? 15
     }
 }
 

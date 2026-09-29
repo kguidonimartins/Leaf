@@ -98,6 +98,8 @@ live-reload so hand-edited config is picked up automatically.
   in place, unused, for a future feed/key of this fork's own.
 
 ### Fixed
+- **Extreme idle times in config.toml no longer crash Leaf.** Integers outside
+  the allowed range are clamped before nearest-value arithmetic.
 - **Smart Alerts now uses each app's total RSS, including helpers.** The
   memory filter and notification ordering use the aggregate even when
   background activity detection is off. The README now states that this

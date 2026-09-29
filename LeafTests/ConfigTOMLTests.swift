@@ -149,12 +149,29 @@ struct ConfigTOMLTests {
     // MARK: - clampNotifyMinutes
 
     @Test func clampNotifyMinutesClampsToNearestValue() {
+        #expect(ConfigManagerImpl.clampNotifyMinutes(Int.min) == 5)
+        #expect(ConfigManagerImpl.clampNotifyMinutes(Int.max) == 240)
         #expect(ConfigManagerImpl.clampNotifyMinutes(5) == 5)
         #expect(ConfigManagerImpl.clampNotifyMinutes(7) == 5)
         #expect(ConfigManagerImpl.clampNotifyMinutes(12) == 10)
         #expect(ConfigManagerImpl.clampNotifyMinutes(60) == 60)
         #expect(ConfigManagerImpl.clampNotifyMinutes(200) == 240)
         #expect(ConfigManagerImpl.clampNotifyMinutes(999) == 240)
+    }
+
+    @Test(arguments: [Int.min, Int.max, 5, 240, 123])
+    func parseValidatedHandlesExtremeNotifyMinutes(_ input: Int) {
+        let content = "version = 1\n[general]\nnotify_after_minutes = \(input)\n[apps]\n"
+        let expected: Int
+        switch input {
+        case Int.min, 5: expected = 5
+        case Int.max, 240: expected = 240
+        default: expected = 120
+        }
+        switch ConfigManagerImpl.parseValidated(content) {
+        case .success(let parsed): #expect(parsed.config.notifyAfterMinutes == expected)
+        case .failure: Issue.record("valid integer should be normalized")
+        }
     }
 
     // MARK: - parseAppMode / serializeAppMode
