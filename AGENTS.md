@@ -40,7 +40,7 @@ Always run `make test` after changing tracking logic.
 - **No hardcoded app allow/blocklists.** Behavior must be general. The
   intentional exceptions are: attributing system `WebKit.framework`
   processes to Safari (`systemWebKitOwnerBundleID`), and the fixed list of
-  macOS system processes (Dock, Finder, Spotlight, etc.) `isExcludedApp`
+  macOS system processes (Dock, Spotlight, etc.) `isExcludedApp`
   never tracks, since they're OS chrome rather than user apps and mostly
   don't run with `.regular` activation policy anyway. Document any new
   exception.

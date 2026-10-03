@@ -27,6 +27,10 @@ live-reload so hand-edited config is picked up automatically.
   current UserDefaults values.
 
 ### Changed
+- **Finder is now monitored** like any other regular app (it was in the
+  fixed system-process exclusion list). Build bumped to 22. Since macOS
+  relaunches Finder when it quits, `notify` or `protect` is the sensible mode
+  for it.
 - **Version** bumped from 1.3 (build 5) to **1.4 (build 6)**, then to
   **1.4 (build 7)** for the config.toml symlink fix below, then to
   **1.4 (build 8)** for disabling Sparkle, then to **1.4 (build 9)** for the

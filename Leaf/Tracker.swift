@@ -664,7 +664,6 @@ struct SystemProcessSampler: ProcessSampling {
         let excludedApps = [
             "com.apple.dock",
             "com.apple.Siri",
-            "com.apple.finder",
             "com.apple.coreautha",
             "com.apple.Spotlight",
             "com.apple.loginwindow",
